@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+#
+# Gmail refuses mail whose From is not the authenticated account, so every local
+# sender -- root, smartd, cron -- leaves as the account itself. Without this the
+# relay rejects the message and the failure that prompted it stays unreported.
+/.+/    {{ pve_mail_username }}

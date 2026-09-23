@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# Managed by Ansible (roles/tenant_ssh). Edits here are overwritten.
+
+# The management key is the only credential. Root has no password in a fresh
+# container, but that stops being true the moment a service package adds an
+# account, so this is set rather than relied upon.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+PermitEmptyPasswords no
+
+AllowAgentForwarding no
+X11Forwarding no
+
+MaxAuthTries 3
+LoginGraceTime 30

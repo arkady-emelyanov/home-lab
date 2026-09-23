@@ -1,0 +1,14 @@
+---
+# Mount points, devices and id mapping are all staged as pending changes; the
+# container picks them up only on a full stop and start.
+- name: Restart the container
+  ansible.builtin.command:
+    cmd: "pct reboot {{ lxc_vmid }}"
+  delegate_to: "{{ pve_host }}"
+  register: lxc_reboot
+  changed_when: true
+  # A container that has never been started cannot be rebooted, and does not
+  # need to be -- it will read the new config when it first boots below.
+  failed_when:
+    - lxc_reboot.rc != 0
+    - "'not running' not in (lxc_reboot.stderr | default(''))"

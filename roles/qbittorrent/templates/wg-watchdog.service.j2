@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Stop qBittorrent when the WireGuard tunnel is not carrying traffic
+After=wg-quick@{{ qbittorrent_wg_interface }}.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wg-watchdog.sh

@@ -1,0 +1,29 @@
+---
+# Disk self-tests, and somewhere for their findings to go.
+#
+# smartmontools is installed and running on a stock Proxmox node, and it does
+# mail root when an attribute crosses its threshold. What it does not do is ask
+# the disk to check itself: the shipped DEVICESCAN line carries no -s directive,
+# so `smartctl -c` reported "no self-test has ever been run" on both disks of a
+# mirror that has been in service for months.
+#
+# The difference matters. Passive monitoring notices a sector that has already
+# failed a read -- which, on a mirror with no backup of the media datasets,
+# means noticing at the moment the data is needed. A self-test reads the whole
+# surface on a schedule and finds the bad sector before anything asks for it.
+
+# Short test: a few minutes, checks the electrical and mechanical basics plus a
+# small read sample. Cheap enough to run nightly.
+#
+# 02:00 leaves the 03:00 backup window alone. Self-tests yield to host I/O
+# anyway, but a test that keeps being interrupted takes all night to finish.
+pve_smart_short_test: "S/../.././02"
+
+# Long test: reads every sector. On the 15th rather than the 1st, which already
+# carries the monthly scrub -- both read the whole disk, and there is no reason
+# to do that twice on the same night.
+pve_smart_long_test: "L/../15/./02"
+
+# Where findings go. root is aliased to the real address by pve_mail, so this
+# follows whatever that role is configured with rather than repeating it.
+pve_smart_mail_to: root

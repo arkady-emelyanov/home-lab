@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# Managed by Ansible (roles/pve_ssh). Edits here are overwritten.
+
+# The key is the only credential. With this off, a guessable or reused password
+# on any account stops being a way in, and the brute-force traffic every
+# reachable host sees becomes noise.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+
+# Root by key is how this repository works: pct is root-only and Proxmox's
+# bind-mount check demands literally root@pam. prohibit-password keeps that
+# while refusing root passwords.
+PermitRootLogin prohibit-password
+
+PermitEmptyPasswords no
+# Both are ways for a compromised session to reach back into the client.
+AllowAgentForwarding no
+X11Forwarding no
+
+MaxAuthTries 3
+LoginGraceTime 30

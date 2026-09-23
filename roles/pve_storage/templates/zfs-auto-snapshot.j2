@@ -1,0 +1,34 @@
+#!/bin/sh
+# {{ ansible_managed }}
+#
+# A shim in front of /usr/sbin/zfs-auto-snapshot. Every cron PATH puts
+# /usr/local/sbin ahead of /usr/sbin, so the four jobs the package ships --
+# /etc/cron.d/zfs-auto-snapshot and the three run-parts scripts -- find this one
+# instead, and none of their files has to be edited to get it.
+#
+# It exists to drop one line of stderr. zfs-auto-snapshot lists the snapshots
+# once, then destroys everything past --keep from that list. If a snapshot in
+# the list is already gone by the time its turn comes -- destroyed by hand, or
+# by an overlapping run -- `zfs destroy` writes
+#
+#     could not find any snapshots to destroy; check snapshot names.
+#
+# and exits non-zero. The state that line reports is the state the run wanted:
+# the snapshot is not there. zfs-auto-snapshot agrees, counts a warning and
+# still exits 0 -- but cron mails any output at all, so the line arrives looking
+# like a broken backup.
+#
+# Nothing else is filtered. A pool that cannot be snapshotted, a dataset that
+# does not exist, a full filesystem: all of those still reach the mail.
+set -u
+
+ERRORS=$(mktemp)
+trap 'rm -f "$ERRORS"' EXIT
+
+/usr/sbin/zfs-auto-snapshot "$@" 2>"$ERRORS"
+RC=$?
+
+# grep exits 1 when every line was filtered, which is the ordinary case.
+grep -v -F 'could not find any snapshots to destroy' "$ERRORS" >&2 || true
+
+exit "$RC"

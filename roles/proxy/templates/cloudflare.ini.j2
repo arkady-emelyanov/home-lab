@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+# Read by certbot's dns-cloudflare plugin to write the DNS-01 challenge record.
+dns_cloudflare_api_token = {{ lookup('keepass', proxy_cf_token_entry) }}

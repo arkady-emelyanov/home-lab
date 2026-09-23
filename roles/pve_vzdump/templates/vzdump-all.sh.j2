@@ -1,0 +1,21 @@
+#!/bin/sh
+# {{ ansible_managed }}
+set -eu
+
+# --all rather than a list of vmids. A container added to the inventory and
+# built by `make tenants` is then backed up without anything here being
+# updated, which is the only way a list like that stays correct.
+#
+# Bind mounts are not included and do not need excluding: Proxmox backs up a
+# container's rootfs and, of its mount points, only volumes explicitly marked
+# backup=1. So the share tree is left alone -- it is on the pool already, and
+# qbittorrent's 64G of in-flight downloads are skipped for the same reason.
+exec vzdump --all 1 \
+{% if not pve_vzdump_mail_on_success %}
+    --notification-mode legacy-sendmail \
+{% endif %}
+    --mode {{ pve_vzdump_mode }} \
+    --compress {{ pve_vzdump_compress }} \
+    --storage {{ pve_vzdump_storage }} \
+    --prune-backups {{ pve_vzdump_prune }} \
+    --notes-template '{% raw %}{{ guestname }}{% endraw %}'

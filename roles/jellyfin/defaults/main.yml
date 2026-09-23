@@ -1,0 +1,45 @@
+---
+# Media server with Intel QuickSync transcoding. The container itself is
+# declared in inventory/host_vars/jellyfin.yml.
+
+# Pinned. An unattended jump across a major version of a media server is not a
+# thing to discover by finding the library empty.
+jellyfin_version: "12.1+deb13"
+jellyfin_repo_url: https://repo.jellyfin.org/debian
+jellyfin_repo_key_url: https://repo.jellyfin.org/jellyfin_team.gpg.key
+jellyfin_repo_keyring: /usr/share/keyrings/jellyfin.gpg
+
+jellyfin_hwaccel: true
+
+# Written into /etc/jellyfin/encoding.xml element by element rather than by
+# templating the file: Jellyfin owns it, adds elements between releases, and the
+# web UI writes to it too.
+jellyfin_encoding_settings:
+  # qsv rather than vaapi: both drive the same silicon, but Jellyfin's QSV path
+  # uses Intel's own filters for tonemapping and scaling.
+  HardwareAccelerationType: qsv
+  QsvDevice: /dev/dri/renderD128
+  EnableHardwareEncoding: "true"
+  # Low-power (VDEnc) encoding: on Gen11 and newer this is the fixed-function
+  # encode path -- lower power, higher throughput, EUs left free.
+  EnableIntelLowPowerH264HwEncoder: "true"
+  EnableIntelLowPowerHevcHwEncoder: "true"
+  # The GPU encodes HEVC, roughly halving the bitrate for the same quality.
+  AllowHevcEncoding: "true"
+  # No AV1 encode entrypoint on this chip.
+  AllowAv1Encoding: "false"
+  # HDR to SDR on the GPU; without it an HDR file on an SDR client either
+  # transcodes on the CPU or comes out washed out.
+  EnableTonemapping: "true"
+  EnableVppTonemapping: "true"
+
+# Everything here is backed by a VAEntrypointVLD entry in `vainfo` on this
+# hardware. Listing a codec the chip cannot decode makes Jellyfin fall back to
+# the CPU mid-stream.
+jellyfin_hardware_decoding_codecs:
+  - string: h264
+  - string: hevc
+  - string: mpeg2video
+  - string: vc1
+  - string: vp9
+  - string: av1

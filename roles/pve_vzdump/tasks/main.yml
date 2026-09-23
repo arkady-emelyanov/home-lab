@@ -1,0 +1,86 @@
+---
+- name: Create the dump directory
+  # root-only, inside a dataset root that pve_storage owns as the share id.
+  # A container dump is a tar of that container's entire filesystem, secrets
+  # included, and 0775 on a file share means anything with the share gid can
+  # read it.
+  ansible.builtin.file:
+    path: "{{ pve_vzdump_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Read the storage configuration
+  ansible.builtin.slurp:
+    src: /etc/pve/storage.cfg
+  register: pve_vzdump_cfg
+
+- name: Register the dump directory as a storage
+  # pvesm on the host, for the same reason everything else here uses pct: it
+  # runs as root@pam, and it writes /etc/pve/storage.cfg in the format Proxmox
+  # expects rather than this role guessing at it.
+  ansible.builtin.command:
+    cmd: >-
+      pvesm add dir {{ pve_vzdump_storage }}
+      --path {{ pve_vzdump_dir }}
+      --content backup
+      --prune-backups {{ pve_vzdump_prune }}
+  when: pve_vzdump_section not in pve_vzdump_current
+  changed_when: true
+
+- name: Refuse to repoint a storage that already exists elsewhere
+  # `path` is fixed when a dir storage is created; pvesm cannot change it. If
+  # this name is already pointing somewhere else, someone made it by hand and
+  # silently ignoring that would leave the dumps going to a directory this
+  # role does not manage.
+  ansible.builtin.assert:
+    that:
+      - pve_vzdump_section not in pve_vzdump_current
+        or ('path ' ~ pve_vzdump_dir) in pve_vzdump_current
+    fail_msg: >-
+      A storage named {{ pve_vzdump_storage }} already exists and does not
+      point at {{ pve_vzdump_dir }}. A dir storage cannot be repointed, so
+      this needs a decision: either remove it with
+      `pvesm remove {{ pve_vzdump_storage }}` and re-run, or set
+      pve_vzdump_storage to a name that is free.
+
+- name: Converge the retention policy
+  # Separate from the add above, so changing retention later is a one-line
+  # edit here rather than a storage that has to be removed and recreated.
+  ansible.builtin.command:
+    cmd: >-
+      pvesm set {{ pve_vzdump_storage }}
+      --content backup
+      --prune-backups {{ pve_vzdump_prune }}
+  when:
+    - pve_vzdump_section in pve_vzdump_current
+    - ('prune-backups ' ~ pve_vzdump_prune) not in pve_vzdump_current
+  changed_when: true
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: vzdump-all.sh.j2
+    dest: "{{ pve_vzdump_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - vzdump-all.service
+    - vzdump-all.timer
+  notify: Reload systemd
+
+- name: Enable the daily timer
+  ansible.builtin.systemd_service:
+    name: vzdump-all.timer
+    state: started
+    enabled: true
+    daemon_reload: true

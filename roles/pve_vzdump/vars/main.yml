@@ -1,0 +1,6 @@
+---
+# Derived, not configured. Kept out of defaults so that overriding a default
+# cannot leave these two disagreeing with it. Both are evaluated where they are
+# used, which is after the slurp that registers pve_vzdump_cfg.
+pve_vzdump_current: "{{ pve_vzdump_cfg.content | b64decode }}"
+pve_vzdump_section: "dir: {{ pve_vzdump_storage }}"

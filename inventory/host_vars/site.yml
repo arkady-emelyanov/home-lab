@@ -1,0 +1,19 @@
+---
+# The public web site, served through a Cloudflare tunnel.
+lxc_vmid: 114
+lxc_mac: "BC:24:11:00:00:72"
+
+lxc_hostname: site
+
+# No reserved address is required and no port is forwarded to it. cloudflared
+# dials out to Cloudflare and the site is served back down that connection, so
+# nothing ever connects to this container from outside. The address is reserved
+# only so the container is reachable by name on the LAN like the others.
+lxc_cores: 1
+lxc_memory: 512
+lxc_disk: 8
+
+# Nothing from the pool. A statically generated site lives on the container's
+# own disk, and giving a public-facing tenant a bind mount into the share tree
+# would undo that.
+lxc_mounts: []

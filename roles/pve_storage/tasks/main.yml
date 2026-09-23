@@ -1,0 +1,232 @@
+---
+# Creating a dataset whose mountpoint is an existing, populated directory mounts
+# it OVER that directory. The data is not lost but becomes invisible, and
+# anything writing to the share starts filling the new dataset while the old
+# content sits shadowed underneath consuming space nothing can see.
+
+- name: Read the datasets that already exist
+  ansible.builtin.command:
+    cmd: zfs list -H -o name
+  changed_when: false
+  check_mode: false
+  register: pve_storage_existing
+
+- name: Look for populated directories where the missing datasets would mount
+  # Only the datasets that do not exist yet. A mountpoint with a dataset on it
+  # is the dataset, so listing it says nothing -- and it is a directory on a
+  # pool that is usually busy, which makes the listing slow exactly when the
+  # converge can least afford it.
+  ansible.builtin.find:
+    paths: "{{ item.mountpoint }}"
+    file_type: any
+    hidden: true
+  loop: "{{ pve_storage_datasets | rejectattr('name', 'in', pve_storage_existing.stdout_lines) | list }}"
+  loop_control:
+    label: "{{ item.mountpoint }}"
+  register: pve_storage_occupied
+  failed_when: false
+
+- name: Read every property those datasets carry
+  # One call for the whole pool. The zfs module reads its own state with about
+  # fifteen `zfs get` per dataset, and metadata reads that cost nothing on an
+  # idle pool queue behind everything else on a busy one -- which is the state
+  # this pool is usually in. Reading it once here lets the tasks below skip the
+  # module entirely for a dataset that already matches, which is all of them on
+  # every run after the first.
+  #
+  # -H is tab separated, and the values print the way they are written in the
+  # inventory: 128K, 1M, zstd, off, sa. That is what makes the comparison a
+  # plain string one.
+  ansible.builtin.command:
+    cmd: zfs get -H -o name,property,value -t filesystem -r all {{ pve_storage_pool }}
+  changed_when: false
+  check_mode: false
+  register: pve_storage_properties
+
+- name: Rewrite what it reported as one comparable line per property
+  # `zfs get -H` separates its three columns with tabs, and a tab cannot be
+  # written into this file -- ansible-lint rejects it. Inside a regex it can,
+  # because the escape is Python's rather than YAML's, so the separator is
+  # rewritten to an = here once and the comparisons below stay plain string
+  # ones. No dataset name or declared value contains an =.
+  ansible.builtin.set_fact:
+    pve_storage_reported: >-
+      {{ pve_storage_properties.stdout_lines
+         | map('regex_replace', '\t', '=') | list }}
+
+- name: Install the snapshot timer
+  # Property-driven: it snapshots datasets carrying com.sun:auto-snapshot=true
+  # and skips the rest, so the policy lives in the dataset declaration rather
+  # than in a second config file.
+  ansible.builtin.apt:
+    name: zfs-auto-snapshot
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Keep the one benign warning the timer produces out of the mail
+  # The package's cron jobs resolve the program through PATH, and every cron
+  # PATH looks in /usr/local/sbin first, so this shim runs in its place without
+  # any of the four packaged cron files being touched. It drops the line
+  # `zfs destroy` writes when the snapshot it was told to remove is already
+  # gone -- the run's own goal -- and passes every other word through.
+  ansible.builtin.template:
+    src: zfs-auto-snapshot.j2
+    dest: /usr/local/sbin/zfs-auto-snapshot
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Snapshot nothing by default
+  # The package's own default is opt-out -- it would snapshot every dataset on
+  # the pool, including hundreds of gigabytes of media that never changes.
+  # Setting false at the root makes it opt-in, and each dataset that wants
+  # snapshots says so for itself.
+  community.general.zfs:
+    name: "{{ pve_storage_pool }}"
+    state: present
+    extra_zfs_properties:
+      com.sun:auto-snapshot: "false"
+  when: >-
+    (pve_storage_pool ~ '=com.sun:auto-snapshot=false') not in pve_storage_reported
+
+- name: Work out which datasets cannot be created yet
+  # A dataset whose mountpoint is already a populated directory must not be
+  # created: it would mount empty OVER that data, hiding it while the share
+  # fills the new dataset and the old content consumes space nothing can see.
+  #
+  # That is a reason to refuse this one dataset, not to abandon the run. The
+  # rest still converge, and the refusal is raised at the end with the full
+  # list, so one unmigrated share does not hide what else needs doing.
+  ansible.builtin.set_fact:
+    pve_storage_blocked: >-
+      {{ pve_storage_occupied.results
+         | selectattr('matched', 'defined') | selectattr('matched', 'gt', 0)
+         | map(attribute='item')
+         | list }}
+
+- name: Create the datasets
+  community.general.zfs:
+    name: "{{ item.name }}"
+    state: present
+    extra_zfs_properties: "{{ item_wanted }}"
+  vars:
+    item_properties: >-
+      {{ item | dict2items | rejectattr('key', 'equalto', 'name') | items2dict }}
+    item_wanted: >-
+      {{ pve_storage_common | combine(item_properties) }}
+    item_declared: >-
+      {{ item_wanted.items() | map('join', '=') | list }}
+    item_current: >-
+      {{ pve_storage_reported | select('match', item.name ~ '=')
+         | map('regex_replace', '^[^=]+=', '') | list }}
+  loop: "{{ pve_storage_datasets | rejectattr('name', 'in', pve_storage_blocked | map(attribute='name') | list) | list }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.mountpoint }}"
+  # Skipped when the pool already reports every declared property, which costs
+  # nothing: a skipped loop item never reaches the host. A dataset that is
+  # missing has no properties to report and so is never skipped, and a value
+  # spelled differently from the way zfs prints it just fails to match, which
+  # calls the module and lets it make the comparison properly.
+  when: item_declared | difference(item_current) | length > 0
+
+- name: Own the dataset roots by the share id
+  # A fresh dataset root is root:root 0755, which no tenant can write.
+  ansible.builtin.file:
+    path: "{{ item.mountpoint }}"
+    state: directory
+    owner: "{{ share_uid }}"
+    group: "{{ share_gid }}"
+    mode: "{{ pve_storage_dir_mode }}"
+  loop: "{{ pve_storage_datasets | rejectattr('name', 'in', pve_storage_blocked | map(attribute='name') | list) | list }}"
+  loop_control:
+    label: "{{ item.mountpoint }}"
+
+- name: Delegate the share uid to root for container id mapping
+  # An unprivileged container maps container uid N to host uid 100000+N, so it
+  # cannot write files owned by a real id. Tenants map this one id through
+  # unshifted instead, and Proxmox refuses to start a container whose idmap
+  # claims ids /etc/subuid does not delegate to root.
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    line: "root:{{ share_uid }}:1"
+    regexp: "^root:{{ share_uid }}:"
+    state: present
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Delegate the share gid to root for container id mapping
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    line: "root:{{ share_gid }}:1"
+    regexp: "^root:{{ share_gid }}:"
+    state: present
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Stop the packaged cron job from scrubbing
+  # Not by editing /etc/cron.d/zfsutils-linux, which is a conffile and would
+  # prompt on every package upgrade. The script that cron runs reads this
+  # property off the pool root first and skips a pool set to `disable`, so the
+  # packaged file stays exactly as shipped and stops doing anything.
+  #
+  # This is the same property-driven approach the snapshot timer uses: the
+  # policy is a fact about the pool, stored on the pool.
+  community.general.zfs:
+    name: "{{ pve_storage_pool }}"
+    state: present
+    extra_zfs_properties:
+      org.debian:periodic-scrub: disable
+  when: >-
+    (pve_storage_pool ~ '=org.debian:periodic-scrub=disable') not in pve_storage_reported
+
+- name: Create the scrub drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/zfs-scrub-monthly@{{ pve_storage_pool }}.timer.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Set when the scrub runs
+  # A drop-in rather than a unit of our own: the packaged zfs-scrub@.service
+  # already does the right thing, including waiting on a scrub that is already
+  # running rather than failing the way a second `zpool scrub` does.
+  #
+  # A template rather than copy with inline content, for the reason pve_kernel
+  # gives: ansible_managed is injected by the template action and is undefined
+  # anywhere else.
+  ansible.builtin.template:
+    src: zfs-scrub-schedule.conf.j2
+    dest: "/etc/systemd/system/zfs-scrub-monthly@{{ pve_storage_pool }}.timer.d/schedule.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable the monthly scrub
+  # Persistent=true on the packaged timer: a scrub missed because the host was
+  # off runs when it comes back, instead of waiting another month.
+  ansible.builtin.systemd_service:
+    name: "zfs-scrub-monthly@{{ pve_storage_pool }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Report datasets still holding unmigrated data
+  ansible.builtin.assert:
+    that:
+      - pve_storage_blocked | length == 0
+    fail_msg: >-
+      Everything else converged, but these mountpoints are populated
+      directories and their datasets do not exist yet:
+      {{ pve_storage_blocked | map(attribute='mountpoint') | join(', ') }}.
+      Creating a dataset over them would hide the data rather than lose it:
+      the mount shadows the tree, the share reads empty, and writes fill the
+      new dataset while the old content consumes space nothing can see. Move
+      each directory aside, create the dataset on the now-empty path, copy the
+      data back with `rsync -aHAX --delete`, then run this again. Stop any
+      container binding the path first -- a bind mount follows the inode, so
+      the rename takes the container's mount with it.

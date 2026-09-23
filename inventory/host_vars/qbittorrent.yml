@@ -1,0 +1,40 @@
+---
+# The torrent container. Declared here rather than in the role because this is
+# per-host data and the vmid already lives in inventory.
+lxc_vmid: 113
+
+# Fixed MAC, so the router's reservation survives the container being rebuilt.
+# BC:24:11 is Proxmox's own OUI; the last octet is the vmid in hex (113 = 0x71).
+lxc_mac: "BC:24:11:00:00:71"
+
+lxc_hostname: qbittorrent
+
+# Reserve 192.168.0.43 for this MAC on the router. Nothing in the automation
+# needs a fixed address -- roles/lxc asks the hypervisor where the container is
+# on every run -- but blocky's customDNS declares qbittorrent.home statically,
+# and a static record pointing at a moved container answers wrongly rather than
+# not at all. The WebUI is also something a person types an address for.
+lxc_cores: 2
+lxc_memory: 2048
+lxc_disk: 8
+
+# The same two paths jellyfin uses, read-write. Downloads land directly in the
+# library and seed from there, so nothing is copied after the fact.
+#
+# Nothing arbitrates between this tenant and jellyfin -- they hold the same
+# mounts and neither takes locks the other respects.
+#
+# /media/downloads is deliberately not on the pool. In-flight torrent writes are
+# random pieces, and those datasets are recordsize=1M for streaming: on
+# copy-on-write a partial write means read-modify-write of a whole 1M record.
+# The NVMe has no such penalty and is otherwise idle, so pieces land there and
+# qBittorrent moves each torrent to the library once complete -- which is a
+# sequential write, exactly what recordsize=1M is for.
+#
+# It is a volume rather than a bind mount, so Proxmox allocates and owns it and
+# destroys it with the container. That is right for data that is by definition
+# in flight.
+lxc_mounts:
+  - {host: /mnt/tank/share/movies, path: /media/movies, ro: false}
+  - {host: /mnt/tank/share/shows, path: /media/shows, ro: false}
+  - {volume: "local-lvm:64", path: /media/downloads, ro: false}

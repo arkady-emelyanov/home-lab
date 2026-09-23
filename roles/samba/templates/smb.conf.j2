@@ -1,0 +1,78 @@
+# {{ ansible_managed }}
+# Managed by Ansible (roles/nas). Edits here are overwritten.
+
+[global]
+   workgroup = {{ samba_workgroup }}
+   server string = %h
+   server role = standalone server
+   security = user
+
+   # The whole point: an unknown user becomes the guest account rather than
+   # being rejected. "Bad User" -- not "Bad Password" -- means a wrong password
+   # for a real account is still refused instead of silently becoming a guest.
+   map to guest = Bad User
+   guest account = {{ samba_guest_account }}
+
+   # SMB1 has no integrity protection and a long history of unauthenticated
+   # remote execution. Nothing made this decade needs it.
+   server min protocol = SMB2_10
+   client min protocol = SMB2_10
+
+   # NetBIOS is broadcast name resolution from the 1990s and costs three more
+   # listening ports. Discovery is handled by mDNS and WS-Discovery instead.
+   disable netbios = yes
+   smb ports = 445
+
+   # Nothing here serves printers, and the print subsystem is attack surface.
+   load printers = no
+   printing = bsd
+   printcap name = /dev/null
+   disable spoolss = yes
+
+   # Bind explicitly, so an interface added later is not served by accident.
+   interfaces = {{ samba_interfaces | join(' ') }}
+   bind interfaces only = yes
+
+   hosts allow = {{ samba_allowed_networks | join(' ') }}
+   hosts deny = 0.0.0.0/0
+
+   # A symlink inside a share must not become a way out of it.
+   wide links = no
+   unix extensions = no
+
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+   logging = file
+   log level = 1
+
+{% for share in samba_shares %}
+[{{ share.name }}]
+   comment = {{ share.comment | default(share.name) }}
+   path = {{ share.path }}
+   browseable = yes
+   guest ok = yes
+   guest only = yes
+{% if share.writable | default(false) %}
+   read only = no
+   force user = {{ samba_guest_account }}
+   create mask = {{ samba_create_mask }}
+   directory mask = {{ samba_directory_mask }}
+{% if share.recycle | default(false) %}
+   # Every client on the LAN can delete anything here without authenticating,
+   # and there are no snapshots. Turning a delete into a move is the difference
+   # between a mistake and a loss. Empty .recycle periodically.
+   vfs objects = recycle
+   recycle:repository = .recycle
+   recycle:keeptree = yes
+   recycle:versions = yes
+   recycle:touch = yes
+   recycle:directory_mode = {{ samba_directory_mask }}
+   recycle:exclude = *.tmp|*.temp|~$*|.DS_Store
+{% endif %}
+{% else %}
+   # Read-only here, and the bind mount is read-only at the kernel level too.
+   # Two independent mechanisms.
+   read only = yes
+{% endif %}
+
+{% endfor %}

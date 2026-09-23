@@ -1,0 +1,95 @@
+---
+# One nginx in front of the LAN's web services, so they answer on port 80 by
+# name instead of on a port each.
+#
+# blocky points the proxied names here rather than at the services, which is
+# what makes http://jellyfin.home work -- and what means jellyfin.home:8096 no
+# longer does. The services are still reachable directly by address; it is only
+# the names that now arrive here first.
+#
+# Each site is written out with the options it actually needs rather than a
+# shared block that is the union of everyone's requirements. Immich's upload
+# limit is not Jellyfin's problem, and a single generous timeout everywhere
+# hides which service needed it.
+
+# Who may reach a .home name on :80. Only the LAN, and not the gateway within
+# it. A .home name is a LAN-only name: a client and this proxy share the subnet
+# and talk directly, so nothing legitimate arrives by way of the router. A
+# forwarded port 80 is the one way the internet could reach these vhosts, and
+# whichever source such a request wears -- the client's own public address, the
+# WAN address if the router masquerades, or the gateway's own address -- it is
+# not a plain LAN host, so the allow-list below drops it. This is the floor
+# under "80 is never forwarded": enforced here rather than assumed of the router.
+proxy_lan: 192.168.0.0/24
+proxy_gateway: 192.168.0.1
+
+proxy_sites:
+  - name: jellyfin.home
+    upstream: "http://192.168.0.42:8096"
+    # Streaming: nginx must not sit on the response collecting it into buffers
+    # before passing it on, and a long read timeout keeps a paused film from
+    # being cut off mid-stream.
+    buffering: false
+    read_timeout: 3600s
+    max_body: 100m
+
+  - name: photos.home
+    upstream: "http://192.168.0.46:2283"
+    # Uploads are whole videos. Unlimited rather than a large number, because
+    # any number here is a file someone cannot upload -- and this is the path
+    # that exists precisely so uploads do not go through Cloudflare, which caps
+    # bodies at 100 MB on the free plan.
+    buffering: false
+    read_timeout: 3600s
+    max_body: 0
+
+  - name: rss.home
+    upstream: "http://192.168.0.48:8080"
+    # Text. The only large request it ever sees is an OPML import.
+    buffering: true
+    read_timeout: 300s
+    max_body: 32m
+
+  - name: health.home
+    upstream: "http://192.168.0.49:8080"
+    buffering: true
+    read_timeout: 60s
+    max_body: 1m
+
+  - name: qbittorrent.home
+    upstream: "http://192.168.0.43:8080"
+    # .torrent files are small; the WebUI is otherwise ordinary.
+    buffering: true
+    read_timeout: 300s
+    max_body: 100m
+
+# --- The one name served to the internet ----------------------------------
+#
+# Jellyfin, over TLS, on 443 only. Deliberately not through a Cloudflare tunnel:
+# Cloudflare's terms restrict proxying video, and every other name here already
+# depends on that account -- a strike over streaming would take the web site,
+# the photos and the feeds with it. Here Cloudflare only answers DNS and issues
+# nothing; the bytes go straight from this house to the viewer.
+#
+# Port 80 must NOT be forwarded to this container. The LAN names above are
+# matched by Host header, and a Host header is just text anyone can send, so a
+# forwarded 80 would otherwise publish jellyfin.home, photos.home and rss.home
+# to the internet. The proxy_lan allow-list is the floor under this -- the :80
+# vhosts drop any source that is not a plain LAN host -- but it is a second line,
+# not the first: keep 80 unforwarded. Only 443 is forwarded, and on 443 exactly
+# one name is served.
+proxy_public_domain: "tv.{{ public_domain }}"
+proxy_public_upstream: "http://192.168.0.42:8096"
+
+# A CNAME to the name pve_ddns already keeps pointed at this address, rather
+# than a second A record to keep in step with it. DNS only -- proxied, TLS would
+# terminate at Cloudflare and the video would cross their network, which is the
+# thing this arrangement exists to avoid.
+proxy_public_cname_target: "home.{{ public_domain }}"
+
+# Issued over DNS-01: the challenge is a TXT record, so Let's Encrypt never
+# connects inbound and nothing needs port 80 open. The token is the same
+# Zone:DNS:Edit one the rest of this repository uses.
+proxy_cf_token_entry: cloudflare/token.txt
+proxy_certbot_email: "{{ admin_email }}"
+proxy_cert_dir: "/etc/letsencrypt/live/{{ proxy_public_domain }}"

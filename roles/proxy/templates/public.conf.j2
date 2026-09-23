@@ -1,0 +1,57 @@
+# {{ ansible_managed }}
+#
+# The only server block listening on 443, and the only name reachable from
+# outside this house.
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name {{ proxy_public_domain }};
+
+    ssl_certificate     {{ proxy_cert_dir }}/fullchain.pem;
+    ssl_certificate_key {{ proxy_cert_dir }}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Tell browsers to come back over TLS without being asked. Port 80 is not
+    # forwarded, so there is no redirect to fall back on.
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy no-referrer-when-downgrade always;
+
+    # Whole films. Any limit here is a thing that cannot be uploaded or fetched.
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass {{ proxy_public_upstream }};
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Streaming: do not collect the response before passing it on, and do
+        # not cut off a paused film.
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+# Anything else arriving on 443 -- an address, a scanner guessing names, a
+# forged Host -- gets the connection closed rather than served by whichever
+# block happens to be first.
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_certificate     {{ proxy_cert_dir }}/fullchain.pem;
+    ssl_certificate_key {{ proxy_cert_dir }}/privkey.pem;
+    return 444;
+}

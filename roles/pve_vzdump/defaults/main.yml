@@ -1,0 +1,82 @@
+---
+# Container dumps, onto the pool.
+#
+# Every container's rootfs lives on local-lvm, and nothing was copying it
+# anywhere. Ansible rebuilds the containers, so most of what is on those disks
+# is reproducible -- but not all of it, and the exceptions are the interesting
+# ones: Immich's postgres holds the albums, faces and metadata for 48,000
+# photos whose files are safe on the pool, and miniflux's holds every feed and
+# what has been read. Rebuilt from the roles, both come back empty.
+#
+# So the dumps exist for the state inside the containers, not for the
+# containers. That is also why they go on tank rather than staying on the
+# system disk: local-lvm losing a thin pool takes all ten rootfs at once, which
+# is exactly the failure being insured against.
+
+# Under the dataset, not at its root. pve_storage owns every dataset root as
+# the share id at 0775, which is right for a file share and wrong for this: a
+# container dump contains that container's /etc/shadow and every credential in
+# it. This subdirectory is root-only.
+#
+# Named `pve` rather than `dump` because Proxmox appends a dump/ of its own
+# beneath whatever path a dir storage is given. Pointing it at .../backup/dump
+# produces .../backup/dump/dump, which works and reads like a mistake.
+pve_vzdump_dataset_root: /mnt/tank/backup
+pve_vzdump_dir: /mnt/tank/backup/pve
+
+# Registered with Proxmox rather than written with --dumpdir, so the dumps are
+# listed in the web UI and restore is a button. At 3am that matters more than
+# the tidiness of not registering anything.
+pve_vzdump_storage: nas-backup
+
+# snapshot mode: the container keeps running and is frozen only for the moment
+# the LVM-thin snapshot is taken. stop mode would be strictly more consistent
+# and takes every service down for the duration, which for a postgres that
+# already survives power loss is a poor trade.
+pve_vzdump_mode: snapshot
+pve_vzdump_compress: zstd
+
+# Daily, an hour ahead of the offsite backup so the two never overlap on the
+# same disks. Persistent, so a missed night runs at the next boot.
+pve_vzdump_on_calendar: "*-*-* 01:00:00"
+pve_vzdump_randomized_delay: 15m
+
+# Measured, not estimated: a full run of all ten containers is 7.3G, of which
+# immich's rootfs is 4.0G and the other nine are 200-600M each.
+#
+# The two rules overlap rather than add. Per guest, keep-daily holds the last
+# three days and keep-weekly the most recent dump of each of the last three
+# ISO weeks -- and this week's most recent is usually one the daily rule has
+# already kept. So the steady state is five dumps per guest, about 36G, on a
+# pool with 2T free.
+#
+# Daily for the mistake noticed the same week, weekly for the one noticed after
+# it. There is no monthly: a month-old copy of a feed reader's read state is
+# not worth the space, and anything that matters for longer belongs offsite in
+# restic instead.
+pve_vzdump_prune: keep-daily=3,keep-weekly=3
+
+pve_vzdump_script_path: /usr/local/sbin/vzdump-all
+
+# Whether a run that succeeded is worth an email.
+#
+# false, to match every other job on this host: restic, the DDNS updater and
+# the scrub are all silent until they break, and pve_mail exists precisely so
+# that a failure says what happened rather than that something did. A daily
+# "ten containers ok" trains you to archive the sender unread, which is how the
+# one that says otherwise gets missed.
+#
+# Proxmox has no off switch for this, so the mechanism is indirect and worth
+# writing down. vzdump decides in PVE::VZDump::send_notification:
+#
+#   legacy-sendmail + no --mailto  -> takes the legacy branch, finds no
+#                                     recipient, and sends nothing. The new
+#                                     notification system is never reached.
+#   auto            + no --mailto  -> falls through to the notification system,
+#                                     where the builtin default-matcher has
+#                                     mode=all and forwards everything,
+#                                     success included, to mail-to-root.
+#
+# Failures still reach you either way: the OnFailure drop-in pve_mail installs
+# on vzdump-all.service does not depend on any of this.
+pve_vzdump_mail_on_success: false

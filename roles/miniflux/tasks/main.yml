@@ -1,0 +1,185 @@
+---
+- name: Read the secrets
+  ansible.builtin.set_fact:
+    miniflux_db_password: "{{ lookup('keepass', miniflux_db_password_entry) }}"
+    miniflux_admin_password: "{{ lookup('keepass', miniflux_admin_password_entry) }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: Install Postgres
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Start Postgres
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Look for the database role
+  # runuser rather than become_user: postgres. Ansible's become plumbing sends
+  # the module's JSON back over stdout, and this host prints a locale warning
+  # on every interactive shell, which lands in front of it -- the module then
+  # fails with "No start of json char found" and no_log hides why.
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u postgres -- psql -tAc
+      "SELECT 1 FROM pg_roles WHERE rolname='{{ miniflux_db_user }}'"
+  register: miniflux_role_present
+  changed_when: false
+
+- name: Create the database role
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - postgres
+      - --
+      - psql
+      - -c
+      - "CREATE ROLE {{ miniflux_db_user }} LOGIN PASSWORD '{{ miniflux_db_password }}'"
+  when: miniflux_role_present.stdout.strip() != "1"
+  changed_when: true
+  no_log: true
+
+- name: Look for the database
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u postgres -- psql -tAc
+      "SELECT 1 FROM pg_database WHERE datname='{{ miniflux_db_name }}'"
+  register: miniflux_db_present
+  changed_when: false
+
+- name: Create the database
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u postgres -- psql -c
+      "CREATE DATABASE {{ miniflux_db_name }} OWNER {{ miniflux_db_user }}"
+  when: miniflux_db_present.stdout.strip() != "1"
+  changed_when: true
+
+- name: Install Miniflux
+  ansible.builtin.apt:
+    deb: "{{ miniflux_deb_url }}"
+  notify: Restart miniflux
+
+- name: Configure Miniflux
+  ansible.builtin.template:
+    src: miniflux.conf.j2
+    dest: /etc/miniflux.conf
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart miniflux
+
+- name: Enable and start Miniflux
+  ansible.builtin.systemd_service:
+    name: miniflux
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# --- The tunnel -------------------------------------------------------------
+
+- name: Install cloudflared
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/cloudflare/cloudflared/releases/download/{{ miniflux_cloudflared_version }}/cloudflared-linux-amd64
+    dest: /usr/local/bin/cloudflared
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart cloudflared
+
+- name: Create the cloudflared account
+  ansible.builtin.user:
+    name: cloudflared
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create the cloudflared configuration directory
+  ansible.builtin.file:
+    path: /etc/cloudflared
+    state: directory
+    owner: root
+    group: cloudflared
+    mode: "0750"
+
+- name: Install the tunnel credentials
+  ansible.builtin.copy:
+    content: "{{ lookup('keepass', miniflux_tunnel_credentials_entry) }}"
+    dest: /etc/cloudflared/credentials.json
+    owner: root
+    group: cloudflared
+    mode: "0640"
+  no_log: true
+  notify: Restart cloudflared
+
+- name: Configure the tunnel
+  ansible.builtin.template:
+    src: cloudflared-config.yml.j2
+    dest: /etc/cloudflared/config.yml
+    owner: root
+    group: cloudflared
+    mode: "0640"
+  notify: Restart cloudflared
+
+- name: Install the tunnel unit
+  ansible.builtin.template:
+    src: cloudflared.service.j2
+    dest: /etc/systemd/system/cloudflared.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart cloudflared
+
+- name: Start the tunnel
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Read the Cloudflare token
+  ansible.builtin.set_fact:
+    miniflux_cf_token: "{{ lookup('keepass', miniflux_cf_token_entry) }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: Find the zone
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ miniflux_domain.split('.')[-2:] | join('.') }}"
+    headers:
+      Authorization: "Bearer {{ miniflux_cf_token }}"
+  delegate_to: localhost
+  register: miniflux_zone
+  no_log: true
+
+- name: Publish the tunnel CNAME for {{ miniflux_domain }}
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ miniflux_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ miniflux_cf_token }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ miniflux_domain }}"
+      content: "{{ miniflux_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+      ttl: 1
+    status_code: [200, 400]
+  delegate_to: localhost
+  register: miniflux_dns
+  changed_when: miniflux_dns.status == 200
+  failed_when: >-
+    miniflux_dns.status == 400
+    and 'already exists' not in (miniflux_dns.json.errors | map(attribute='message') | join(' '))
+  no_log: true

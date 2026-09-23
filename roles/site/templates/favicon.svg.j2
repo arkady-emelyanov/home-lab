@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- {{ ansible_managed }} -->
+<!--
+  A cloud, for a domain called .cloud. Drawn as overlapping circles over a
+  rounded base rather than as one traced path: at sixteen pixels the silhouette
+  is all that survives, and this way the shape is readable in the source.
+
+  An SVG favicon carries its own stylesheet, so the fill follows the tab's
+  theme the same way the page does. A browser that ignores the media query gets
+  the light fill, which is dark ink, and that is the safer of the two to be
+  wrong about.
+
+  No double hyphen anywhere in these comments: XML forbids it inside one, and
+  the file stops being an icon and starts being a parse error.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .cloud { fill: #1c1917; }
+    @media (prefers-color-scheme: dark) {
+      .cloud { fill: #e7e5e4; }
+    }
+  </style>
+  <g class="cloud">
+    <circle cx="10" cy="19" r="6"/>
+    <circle cx="16" cy="14.5" r="7.5"/>
+    <circle cx="22" cy="19" r="6"/>
+    <rect x="10" y="19" width="12" height="6"/>
+  </g>
+</svg>

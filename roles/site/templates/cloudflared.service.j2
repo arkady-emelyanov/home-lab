@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Cloudflare tunnel for {{ site_domain }}
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/cloudflared --config {{ site_config_path }} --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+# It needs the credentials and nothing else on this machine.
+User=cloudflared
+Group=cloudflared
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

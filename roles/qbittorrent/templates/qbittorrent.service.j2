@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+[Unit]
+Description=qBittorrent
+# Ordered after the tunnel, but deliberately not bound to it: the watchdog is
+# what starts and stops this, so that the decision lives in one place.
+After=network-online.target wg-quick@{{ qbittorrent_wg_interface }}.service
+Requires=wg-quick@{{ qbittorrent_wg_interface }}.service
+
+[Service]
+User={{ qbittorrent_user }}
+ExecStart=/usr/bin/qbittorrent-nox --webui-port={{ qbittorrent_webui_port }}
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

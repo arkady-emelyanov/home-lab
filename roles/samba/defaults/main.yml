@@ -1,0 +1,33 @@
+---
+# Anonymous SMB over the share tree. The container itself is declared in
+# inventory/host_vars/nas.yml.
+
+# The shares, matching those mounts. `writable` must agree with the mount's
+# `ro`: read-only is enforced at the mount as well as here, so a share declared
+# writable over a read-only mount would accept a connection and fail every
+# write.
+samba_shares:
+  - {name: documents, path: /srv/documents, comment: Documents, writable: true, recycle: true}
+  - {name: drone, path: /srv/drone, comment: Drone footage, writable: true, recycle: true}
+  - {name: photos, path: /srv/photos, comment: Photos, writable: true, recycle: true}
+  - {name: movies, path: /srv/movies, comment: Movies (read-only)}
+  - {name: shows, path: /srv/shows, comment: Shows (read-only)}
+
+samba_workgroup: WORKGROUP
+# Anonymous access with no network restriction means anything that can route
+# here can read the shares. This is the boundary.
+samba_allowed_networks:
+  - 192.168.0.0/24
+  - 127.0.0.1
+samba_interfaces: [lo, eth0]
+
+# Files under the shares are owned by the share id, which the container maps
+# through unshifted, so writes land with the ownership the data already has.
+samba_guest_account: nobody
+samba_create_mask: "0664"
+samba_directory_mask: "0775"
+
+# Discovery. NetBIOS is disabled (see the template), which is what would
+# otherwise put the server under "Network" in a file manager, so two modern
+# daemons do it instead: mDNS for Linux and macOS, WS-Discovery for Windows.
+samba_advertise: true

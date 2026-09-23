@@ -1,0 +1,6 @@
+// {{ ansible_managed }}
+//
+// The two switches that decide whether apt-daily does anything. Refreshing the
+// lists was already on; installing was not.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";

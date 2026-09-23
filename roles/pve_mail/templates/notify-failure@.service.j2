@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Mail about %i having failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/notify-failure %i

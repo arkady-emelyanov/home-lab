@@ -1,0 +1,200 @@
+---
+- name: Install WireGuard and qBittorrent
+  ansible.builtin.apt:
+    name:
+      - wireguard-tools
+      - qbittorrent-nox
+      - iptables
+      # wg-quick shells out to resolvconf to apply the config's DNS line, and
+      # exits 127 without it. That line is what sends this container's lookups
+      # through the tunnel instead of to the LAN resolver, so it matters here
+      # more than the DNS setting usually would.
+      - openresolv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Confirm the config sets PersistentKeepalive
+  # Without it an idle tunnel stops handshaking, the watchdog reads that as a
+  # dead tunnel and stops qBittorrent, and with no traffic it never recovers.
+  # Checked on the stored config rather than assumed, because it is the
+  # provider's and is installed verbatim.
+  ansible.builtin.assert:
+    that:
+      - "'PersistentKeepalive' in lookup('keepass', qbittorrent_wg_entry)"
+    fail_msg: >-
+      The {{ qbittorrent_wg_entry }} entry has no PersistentKeepalive. Add
+      "PersistentKeepalive = 25" under [Peer]. The watchdog and the endpoint
+      re-resolver both test handshake age, and without keepalive an idle tunnel
+      is indistinguishable from a broken one.
+
+- name: Install the tunnel config
+  # Copied verbatim, never templated: it is the provider's file, it carries its
+  # own PostUp rules, and it contains a private key.
+  ansible.builtin.copy:
+    content: "{{ lookup('keepass', qbittorrent_wg_entry) }}"
+    dest: "/etc/wireguard/{{ qbittorrent_wg_interface }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  # The file is a secret; a diff of it would put the private key in the log.
+  diff: false
+  no_log: true
+  notify: Restart wireguard
+
+- name: Install the endpoint re-resolver
+  # Ships with wireguard-tools as an example, so it is not on PATH.
+  ansible.builtin.copy:
+    src: /usr/share/doc/wireguard-tools/examples/reresolve-dns/reresolve-dns.sh
+    dest: /usr/local/bin/reresolve-dns.sh
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the kill switch and the watchdog
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - {src: killswitch.sh.j2, dest: /usr/local/bin/qbittorrent-killswitch.sh}
+    - {src: wg-watchdog.sh.j2, dest: /usr/local/bin/wg-watchdog.sh}
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: Reload the kill switch
+
+- name: Install the tunnel health endpoint
+  ansible.builtin.template:
+    src: vpn-health.py.j2
+    dest: /usr/local/bin/vpn-health
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart vpn-health
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - qbittorrent-killswitch.service
+    - vpn-health.service
+    - wg-reresolve.service
+    - wg-reresolve.timer
+    - wg-watchdog.service
+    - wg-watchdog.timer
+    - qbittorrent.service
+  notify:
+    - Reload the kill switch
+    - Restart qbittorrent
+
+- name: Create the qBittorrent account
+  ansible.builtin.user:
+    name: "{{ qbittorrent_user }}"
+    system: true
+    create_home: true
+    home: /var/lib/qbittorrent
+    shell: /usr/sbin/nologin
+    # The share tree is owned by this id and the container maps it through
+    # unshifted, so files written into the library carry the ownership the rest
+    # of the pool expects.
+    groups: "{{ share_gid | string }}"
+    append: true
+
+- name: Create the incomplete-downloads directory
+  ansible.builtin.file:
+    path: "{{ qbittorrent_incomplete_path }}"
+    state: directory
+    owner: "{{ qbittorrent_user }}"
+    group: "{{ qbittorrent_user }}"
+    mode: "0750"
+
+- name: Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ qbittorrent_config_dir }}"
+    state: directory
+    owner: "{{ qbittorrent_user }}"
+    group: "{{ qbittorrent_user }}"
+    mode: "0750"
+
+- name: Derive the WebUI password hash
+  # qBittorrent stores the password as PBKDF2-HMAC-SHA512, 100k iterations,
+  # base64 salt and key joined by a colon inside @ByteArray().
+  #
+  # The salt is derived from the password rather than drawn at random, so the
+  # same password always yields the same hash and the config does not change on
+  # every run. That gives up the salt's value against precomputed tables, which
+  # is a fair trade for a service reachable only from the LAN and whose LAN
+  # clients skip authentication entirely -- and it is what makes this
+  # idempotent.
+  #
+  # The password arrives on stdin, not as an argument: an argument is visible
+  # in ps to every user on the machine for as long as the process runs.
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import base64, hashlib, sys
+        pw = sys.stdin.read().strip().encode()
+        salt = hashlib.sha256(b"nas-next:qbittorrent:" + pw).digest()[:16]
+        key = hashlib.pbkdf2_hmac("sha512", pw, salt, 100000, 64)
+        print("@ByteArray(%s:%s)" % (base64.b64encode(salt).decode(),
+                                     base64.b64encode(key).decode()))
+    stdin: "{{ lookup('keepass', qbittorrent_password_entry) }}"
+  delegate_to: localhost
+  register: qbittorrent_password_hash
+  changed_when: false
+  no_log: true
+
+- name: Stop qBittorrent before writing its configuration
+  # qBittorrent owns qBittorrent.conf at runtime: it reads the file at startup
+  # and writes its in-memory state back over it on exit. Templating the file
+  # while it runs achieves nothing -- the next stop discards the change. It has
+  # to be stopped, written, then started.
+  ansible.builtin.systemd_service:
+    name: qbittorrent
+    state: stopped
+  failed_when: false
+
+- name: Configure qBittorrent
+  ansible.builtin.template:
+    src: qBittorrent.conf.j2
+    dest: "{{ qbittorrent_config_dir }}/qBittorrent.conf"
+    owner: "{{ qbittorrent_user }}"
+    group: "{{ qbittorrent_user }}"
+    mode: "0640"
+
+- name: Enable the kill switch and the tunnel
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - qbittorrent-killswitch
+    - "wg-quick@{{ qbittorrent_wg_interface }}"
+    - vpn-health
+
+- name: Enable the timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - wg-reresolve.timer
+    - wg-watchdog.timer
+
+- name: Enable and start qBittorrent
+  # Started and stopped by the watchdog from here on, according to whether the
+  # tunnel is carrying traffic.
+  ansible.builtin.systemd_service:
+    name: qbittorrent
+    state: started
+    enabled: true

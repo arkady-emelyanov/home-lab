@@ -1,0 +1,27 @@
+---
+- name: Rebuild the credential map
+  ansible.builtin.command:
+    cmd: postmap /etc/postfix/sasl_passwd
+  changed_when: true
+  notify: Reload postfix
+
+- name: Rebuild the alias map
+  ansible.builtin.command:
+    cmd: newaliases
+  changed_when: true
+  notify: Reload postfix
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Reload postfix
+  # Restart, not reload. smtp(8) runs chrooted in /var/spool/postfix, and the
+  # copies of resolv.conf, services and nsswitch.conf it needs there are synced
+  # when the service starts -- a reload leaves them as they were. This host had
+  # a resolv.conf in the chroot naming a nameserver from a previous network, so
+  # every delivery failed with "Host not found" while DNS worked perfectly
+  # everywhere else on the machine.
+  ansible.builtin.systemd_service:
+    name: postfix
+    state: restarted

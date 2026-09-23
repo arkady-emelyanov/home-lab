@@ -1,0 +1,89 @@
+---
+- name: Install restic
+  ansible.builtin.apt:
+    name: restic
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the restic configuration directory
+  ansible.builtin.file:
+    path: "{{ pve_backup_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the repository password
+  ansible.builtin.copy:
+    content: "{{ lookup('keepass', pve_backup_password_entry) }}\n"
+    dest: "{{ pve_backup_repo_password_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install the B2 credentials
+  ansible.builtin.template:
+    src: b2.env.j2
+    dest: "{{ pve_backup_env_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: restic-backup.sh.j2
+    dest: "{{ pve_backup_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the verification script
+  ansible.builtin.template:
+    src: restic-verify.sh.j2
+    dest: "{{ pve_backup_verify_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - restic-backup.service
+    - restic-backup.timer
+    - restic-verify.service
+    - restic-verify.timer
+  notify: Reload systemd
+
+- name: Initialise the repository
+  # Done here rather than only in the script so that bad credentials or an
+  # unreachable bucket fail during a converge, where someone is watching,
+  # instead of silently at 3am.
+  ansible.builtin.shell: |
+    set -a
+    . {{ pve_backup_env_path }}
+    set +a
+    restic cat config >/dev/null 2>&1 || restic init
+  register: pve_backup_init
+  changed_when: "'created restic repository' in pve_backup_init.stdout"
+
+- name: Enable the daily timer
+  ansible.builtin.systemd_service:
+    name: restic-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Enable the weekly verification
+  ansible.builtin.systemd_service:
+    name: restic-verify.timer
+    state: started
+    enabled: true
+    daemon_reload: true

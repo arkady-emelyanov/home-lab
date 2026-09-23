@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+DATABASE_URL=user={{ miniflux_db_user }} password={{ miniflux_db_password }} dbname={{ miniflux_db_name }} sslmode=disable
+LISTEN_ADDR={{ miniflux_listen }}
+
+# Miniflux applies its own schema migrations on start, so an upgrade is the
+# package and a restart.
+RUN_MIGRATIONS=1
+
+# Only acts when there are no users at all, so it creates the first account and
+# is inert on every run after that. Changing the password here later does
+# nothing -- change it in the web interface.
+CREATE_ADMIN=1
+ADMIN_USERNAME={{ miniflux_admin_username }}
+ADMIN_PASSWORD={{ miniflux_admin_password }}
+
+POLLING_FREQUENCY={{ miniflux_polling_frequency }}
+BATCH_SIZE={{ miniflux_batch_size }}
+
+# The canonical address, used to build the absolute links Miniflux puts in
+# pages and API responses. It has to be one value, and the public one is the
+# right choice: it is what the phone syncs against and what a shared link has
+# to work from. Reaching it as rss.home still works -- only generated absolute
+# links point at the public name.
+BASE_URL=https://{{ miniflux_domain }}/

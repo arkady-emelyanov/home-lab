@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Report whether traffic is leaving through {{ qbittorrent_wg_interface }}
+After=network-online.target wg-quick@{{ qbittorrent_wg_interface }}.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/vpn-health
+Restart=always
+RestartSec=5
+# Root, because `wg show` needs CAP_NET_ADMIN to read handshake times. Given
+# that, everything else is taken away.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

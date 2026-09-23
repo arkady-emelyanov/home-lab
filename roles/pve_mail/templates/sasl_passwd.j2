@@ -1,0 +1,12 @@
+{# The key must match relayhost exactly, brackets included: postfix looks up
+   the nexthop as written, so "smtp.gmail.com:587" never matches a relayhost of
+   "[smtp.gmail.com]:587" -- it simply finds no credential, skips AUTH, and
+   Gmail answers "Authentication Required" at MAIL FROM.
+
+   Gmail shows an app password as four groups of four -- "abcd efgh ijkl mnop"
+   -- but the password is the sixteen characters; the spaces are display only.
+   They are stripped here because this file is whitespace-delimited, so a
+   password containing them would be parsed as the wrong fields entirely. The
+   same strip is applied wherever else this entry is used, or the two would
+   authenticate with different strings. #}
+[{{ pve_mail_relay_host }}]:{{ pve_mail_relay_port }} {{ pve_mail_username }}:{{ lookup('keepass', pve_mail_password_entry) | replace(' ', '') }}

@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+# -i: announce on the LAN leg only. -w: the workgroup Explorer groups it under.
+WSDD2_OPTS="-i eth0 -w {{ samba_workgroup }}"

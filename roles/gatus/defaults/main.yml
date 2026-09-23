@@ -1,0 +1,149 @@
+---
+# Gatus: checks every service on a timer and shows the result on one page.
+#
+# Chosen over Uptime Kuma because its entire configuration is the file below.
+# Kuma keeps its checks in a SQLite database you fill in by clicking, which
+# would be the one thing here that could not be rebuilt from this repository.
+#
+# It ships only as a container image -- no release binaries, not in Debian --
+# so this uses docker, the same as immich.
+#
+# What it cannot see: the restic backup and the DDNS updater are systemd timers
+# on the hypervisor, and a timer that failed has no endpoint to check. Those
+# need OnFailure= units, which is the better mechanism anyway, because it does
+# not depend on this container being alive to notice.
+
+gatus_version: v5.36.0
+gatus_image: "twinproduction/gatus:{{ gatus_version }}"
+gatus_dir: /opt/gatus
+gatus_port: 8080
+
+# How long a check waits before calling it a failure, and how often it runs.
+gatus_interval: 60s
+
+# --- Telling you ------------------------------------------------------------
+#
+# Gatus talks to Gmail itself rather than relaying through the hypervisor's
+# postfix. The alternative would mean postfix accepting mail from the LAN, which
+# turns a satellite into a mail server for everything on the network; this way
+# the credential is read from the same database entry and nothing new listens.
+#
+# Three consecutive failures, not one. Every check here crosses a network, and a
+# single missed scrape is a blip -- alerting on it teaches you to ignore the
+# mail, which is worse than not sending it.
+gatus_alert_after: 3
+gatus_mail_host: smtp.gmail.com
+gatus_mail_port: 587
+gatus_mail_username: "{{ admin_email }}"
+gatus_mail_to: "{{ admin_mail_to }}"
+gatus_mail_password_entry: mail/smtp-password.txt
+
+# Each endpoint states the condition that means healthy, rather than relying on
+# "it answered". A service that returns 500 is answering.
+gatus_endpoints:
+  # --- tenants, on the LAN -------------------------------------------------
+  - name: jellyfin
+    group: tenants
+    url: "http://192.168.0.42:8096/health"
+    conditions: ["[STATUS] == 200"]
+
+  - name: immich
+    group: tenants
+    url: "http://192.168.0.46:2283/api/server/ping"
+    conditions: ["[STATUS] == 200", "[BODY].res == pong"]
+
+  - name: miniflux
+    group: tenants
+    url: "http://192.168.0.48:8080/healthcheck"
+    conditions: ["[STATUS] == 200"]
+
+  - name: qbittorrent
+    group: tenants
+    # Not "does it answer" -- it answers while disconnected. connection_status
+    # and the DHT node count say whether it can actually reach peers, which is
+    # what stops working when the tunnel goes and the kill switch holds.
+    url: "http://192.168.0.43:8080/api/v2/transfer/info"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].connection_status == connected"
+      # Low deliberately. The count swings with how busy the swarm is -- 218
+      # one hour, 80 the next -- so a threshold near the usual value alarms on
+      # quiet nights rather than on failures. Zero means no peer connectivity
+      # at all; anything above a handful means the DHT is working.
+      - "[BODY].dht_nodes > 10"
+
+  - name: proxy
+    group: tenants
+    url: "http://192.168.0.47/"
+    # The proxy answers 404 to a name it does not serve, which is exactly what
+    # a request by address is. A 404 here means nginx is alive and refusing
+    # properly; anything else means it is not.
+    conditions: ["[STATUS] == 404"]
+
+  # --- things that are not HTTP -------------------------------------------
+  - name: blocky
+    group: tenants
+    # Asked a real question, not pinged: a resolver that is listening but no
+    # longer answering is the failure that matters.
+    url: "192.168.0.40"
+    dns:
+      query-name: "nas.home"
+      query-type: "A"
+    conditions: ["[DNS_RCODE] == NOERROR", "[BODY] == 192.168.0.41"]
+
+  - name: nas
+    group: tenants
+    url: "tcp://192.168.0.41:445"
+    conditions: ["[CONNECTED] == true"]
+
+  - name: wireguard
+    group: tenants
+    # The server answers nothing unauthenticated by design, so there is nothing
+    # to probe from outside it. This says the container is up and sshd is
+    # listening -- weaker than checking the tunnel, and honest about being so.
+    url: "tcp://192.168.0.45:22"
+    conditions: ["[CONNECTED] == true"]
+
+  - name: qbittorrent tunnel
+    group: tenants
+    # Not "is wg0 up" -- the container answers whether its traffic is actually
+    # leaving through it, by comparing the address the internet sees it as with
+    # this site's own. Equal addresses mean the tunnel is not carrying traffic
+    # and the kill switch did not catch it.
+    url: "http://192.168.0.43:9000/"
+    conditions: ["[STATUS] == 200", "[BODY].status == ok"]
+
+  - name: proxmox
+    group: host
+    url: "tcp://192.168.0.12:8006"
+    conditions: ["[CONNECTED] == true"]
+
+  # --- the public names, checked from the outside in ----------------------
+  #
+  # These leave the house and come back, so they also prove DNS, the tunnel or
+  # the port forward, and the certificate -- all the parts a LAN check skips.
+  - name: "{{ public_domain }}"
+    group: public
+    url: "https://{{ public_domain }}/"
+    conditions: ["[STATUS] == 418", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "photos.{{ public_domain }}"
+    group: public
+    url: "https://photos.{{ public_domain }}/api/server/ping"
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "rss.{{ public_domain }}"
+    group: public
+    url: "https://rss.{{ public_domain }}/healthcheck"
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "tv.{{ public_domain }}"
+    group: public
+    # The only name served from this house directly, and the only certificate
+    # renewed here rather than by Cloudflare -- so the expiry check is the one
+    # that actually guards something.
+    url: "https://tv.{{ public_domain }}/"
+    # 200, not the 302 Jellyfin answers at the root: gatus follows redirects, so
+    # this lands on the web interface -- which is the better thing to assert
+    # anyway, since a redirect proves only that nginx is listening.
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]

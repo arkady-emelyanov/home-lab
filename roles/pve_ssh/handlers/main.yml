@@ -1,0 +1,10 @@
+---
+# Reload where sshd owns its socket: it re-reads the config without dropping
+# established connections, so a mistake does not disconnect the session applying
+# it. Restart where systemd owns the socket, because reload would kill sshd
+# there; ssh.service is KillMode=process, so existing sessions survive and the
+# new sshd re-inherits the descriptor rather than binding it.
+- name: Reload sshd
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: "{{ 'restarted' if (pve_ssh_socket.status.ActiveState | default('')) == 'active' else 'reloaded' }}"

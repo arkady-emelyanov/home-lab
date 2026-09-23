@@ -1,0 +1,36 @@
+---
+# The jellyfin container. Declared here rather than in the role because this is
+# per-host data and the vmid already lives in inventory.
+lxc_vmid: 111
+
+# Fixed MAC, so a DHCP reservation survives the container being rebuilt.
+# Proxmox generates a random one at creation, which means every `pct destroy`
+# and recreate would hand the container a new address and silently break the
+# reservation. BC:24:11 is Proxmox's own OUI; the last octet is the vmid in hex
+# (111 = 0x6F) so the mapping is readable at a glance.
+lxc_mac: "BC:24:11:00:00:6F"
+
+# The group the GPU render node carries INSIDE the container. Stating it is what
+# lets an unprivileged container open a node whose host group is outside its
+# mapped id range.
+jellyfin_render_gid: 993
+lxc_hostname: jellyfin
+lxc_cores: 4
+lxc_memory: 4096
+lxc_disk: 12
+
+lxc_mounts:
+  # Writable so Jellyfin can delete from the library. Deleting a file needs
+  # write permission on its directory, not ownership of the file, and the
+  # container maps the share id through unshifted.
+  - {host: /mnt/tank/share/movies, path: /media/movies, ro: false}
+  - {host: /mnt/tank/share/shows, path: /media/shows, ro: false}
+  - {host: /mnt/tank/share/drone, path: /media/drone, ro: true}
+  - {host: /mnt/tank/share/photos, path: /media/photos, ro: true}
+  # Library database and metadata. On the pool rather than the container's root
+  # disk, so rebuilding the container does not mean setting Jellyfin up again.
+  - {host: /mnt/tank/apps/jellyfin, path: /var/lib/jellyfin, ro: false}
+
+# The GPU render node.
+lxc_devices:
+  - {path: /dev/dri/renderD128, gid: 993}

@@ -1,0 +1,22 @@
+---
+# Immich: the photo library, restored from the k3s installation this host
+# replaced.
+lxc_vmid: 116
+lxc_mac: "BC:24:11:00:00:74"
+
+lxc_hostname: immich
+
+# Machine learning runs in-process for face and object detection, and the model
+# cache is sizeable, so this tenant is given more memory than the others.
+lxc_cores: 4
+lxc_memory: 6144
+# Container-local disk holds the docker images (~4G), the model cache and the
+# Postgres cluster. The library itself is the bind mount below.
+lxc_disk: 32
+
+lxc_mounts:
+  # The library: originals, thumbnails and transcodes, carried over from the
+  # k3s install. Chowned once to the container's root id -- host root
+  # is not mapped into an unprivileged container, so files owned by it arrive
+  # as nobody and are unwritable.
+  - {host: /mnt/tank/immich/data, path: /data, ro: false}

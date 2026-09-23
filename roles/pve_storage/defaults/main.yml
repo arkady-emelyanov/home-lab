@@ -1,0 +1,26 @@
+---
+# Mechanism only. The datasets themselves are declared in
+# inventory/group_vars/pve.yml -- they are facts about this pool, and the check
+# playbook needs to see them without running this role.
+pve_storage_datasets: []
+pve_storage_common: {}
+pve_storage_dir_mode: "0775"
+pve_storage_file_mode: "0664"
+
+# The pool these datasets live on. Snapshotting is disabled here and enabled per
+# dataset, so a new dataset is not silently snapshotted by default.
+pve_storage_pool: tank
+
+# --- Scrub ------------------------------------------------------------------
+#
+# The package ships two ways to scrub the same pool and enables neither: a cron
+# job in /etc/cron.d/zfsutils-linux, and zfs-scrub-monthly@.timer. The cron job
+# is the one that was running, and it has the flaw that a cron job always has --
+# if the host is off at the appointed minute, the run is simply lost. That is
+# how this pool went from 27 January to 18 September without a scrub: the second
+# Sunday fell while it was powered down, every time.
+#
+# The timer carries Persistent=true, so a missed window runs at the next boot
+# instead of being skipped. The cron job is turned off through the property it
+# reads (see the task), rather than by editing a packaged conffile.
+pve_storage_scrub_on_calendar: "*-*-01 07:00:00"

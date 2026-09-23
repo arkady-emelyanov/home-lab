@@ -1,0 +1,16 @@
+---
+# Miniflux: the feed reader. Subscriptions and read state live here; the phone
+# is a client over its API.
+lxc_vmid: 118
+lxc_mac: "BC:24:11:00:00:76"
+
+lxc_hostname: miniflux
+
+# It polls feeds and stores text. Postgres is the only reason it needs more
+# than the smallest allocation here.
+lxc_cores: 1
+lxc_memory: 1024
+lxc_disk: 8
+
+# Nothing from the pool.
+lxc_mounts: []

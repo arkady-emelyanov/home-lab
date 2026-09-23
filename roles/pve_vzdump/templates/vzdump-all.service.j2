@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up every container to the pool
+# The pool must be mounted and the guests must exist. Without the mount
+# condition an early-boot run would write dumps into the directory underneath
+# the mountpoint, filling the system disk with backups nothing can see.
+After=zfs-mount.service pve-guests.service
+RequiresMountsFor={{ pve_vzdump_dir }}
+
+[Service]
+Type=oneshot
+ExecStart={{ pve_vzdump_script_path }}
+
+# Nice, but not idle. Unlike the offsite backup -- which reads the whole share
+# tree for hours and can afford to yield to everything -- this writes a few
+# gigabytes while containers are frozen around it, so being starved of I/O
+# lengthens the window in which they are held.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

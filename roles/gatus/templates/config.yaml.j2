@@ -1,0 +1,53 @@
+# {{ ansible_managed }}
+#
+# Every check this dashboard performs. Adding one is an entry in
+# roles/gatus/defaults/main.yml -- nothing here is configured by clicking.
+
+storage:
+  # In the container's own volume. History is convenient, not precious: if this
+  # container is rebuilt the checks start again, and the checks are the point.
+  type: sqlite
+  path: /data/gatus.db
+
+ui:
+  title: nas-next
+  header: nas-next
+
+alerting:
+  email:
+    from: {{ gatus_mail_username }}
+    username: {{ gatus_mail_username }}
+    # Spaces stripped: Gmail displays an app password in groups of four, and
+    # the hypervisor's postfix strips them too -- both must send the same
+    # sixteen characters or one of them fails to authenticate.
+    password: "{{ lookup('keepass', gatus_mail_password_entry) | replace(' ', '') }}"
+    host: {{ gatus_mail_host }}
+    port: {{ gatus_mail_port }}
+    to: {{ gatus_mail_to }}
+    default-alert:
+      # Mail when it has failed this many times running, and mail again when it
+      # comes back -- otherwise a resolved problem looks identical to one you
+      # are still ignoring.
+      failure-threshold: {{ gatus_alert_after }}
+      success-threshold: 2
+      send-on-resolved: true
+      enabled: true
+
+endpoints:
+{% for e in gatus_endpoints %}
+  - name: {{ e.name }}
+    group: {{ e.group }}
+    url: "{{ e.url }}"
+    interval: {{ e.interval | default(gatus_interval) }}
+{% if e.dns is defined %}
+    dns:
+      query-name: "{{ e.dns['query-name'] }}"
+      query-type: {{ e.dns['query-type'] }}
+{% endif %}
+    conditions:
+{% for c in e.conditions %}
+      - "{{ c }}"
+{% endfor %}
+    alerts:
+      - type: email
+{% endfor %}

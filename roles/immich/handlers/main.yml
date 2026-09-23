@@ -1,0 +1,14 @@
+---
+- name: Restart immich
+  # Stop is `docker compose down`, so a restart recreates the containers --
+  # which is what a changed .env or compose file needs.
+  ansible.builtin.systemd_service:
+    name: immich
+    state: restarted
+    daemon_reload: true
+
+- name: Restart cloudflared
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    state: restarted
+    daemon_reload: true

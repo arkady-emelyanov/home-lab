@@ -1,0 +1,20 @@
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- {{ ansible_managed }} -->
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+
+  <!-- The record a Linux file manager or macOS Finder picks up to show the
+       server under Network. -->
+  <service>
+    <type>_smb._tcp</type>
+    <port>445</port>
+  </service>
+
+  <!-- Cosmetic: tells macOS which icon to draw. -->
+  <service>
+    <type>_device-info._tcp</type>
+    <port>0</port>
+    <txt-record>model=RackMac</txt-record>
+  </service>
+</service-group>

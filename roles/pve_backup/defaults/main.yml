@@ -1,0 +1,104 @@
+---
+# Offsite backup of the irreplaceable datasets to Backblaze B2.
+#
+# What is backed up is declared in inventory/group_vars/pve.yml, beside the
+# datasets themselves. Movies and shows are deliberately not in that list: they
+# are re-acquirable, and paying to store them offsite would crowd out the data
+# that is not.
+
+# --- Credentials ------------------------------------------------------------
+#
+# Both live in the KeePassXC database. Only their entry names are here.
+#
+# Two separate secrets, and they must stay separate. The B2 key controls who can
+# reach the bucket; the repository password is what encrypts the data before it
+# leaves the house. Deriving one from the other would mean a leaked B2 key also
+# decrypts every backup it can reach.
+pve_backup_b2_entry: backups/backblaze.yaml
+pve_backup_password_entry: backups/restic-password.txt
+
+# Where they land on the hypervisor. root-only; the timer runs as root because
+# reading every file in the share tree requires it.
+pve_backup_conf_dir: /etc/restic
+pve_backup_env_path: /etc/restic/b2.env
+pve_backup_repo_password_path: /etc/restic/password
+
+# --- How it runs ------------------------------------------------------------
+#
+# restic rather than rclone. rclone mirrors, which means a deletion propagates:
+# delete a photo here and the copy offsite goes with it, leaving a backup that
+# faithfully reproduces the accident. restic keeps its own snapshot history, so
+# a file deleted today is still restorable from yesterday. It also deduplicates
+# and encrypts client-side, so B2 never holds plaintext.
+pve_backup_script_path: /usr/local/sbin/restic-backup
+
+# Backups read from a ZFS snapshot, never the live tree. A file rewritten while
+# restic walks the directory would otherwise be captured half-old and half-new,
+# and a backup that cannot be trusted is not a backup.
+#
+# The name is fixed rather than timestamped so the path restic records never
+# changes. restic tracks a snapshot's parent by path and host: a path that moved
+# every night would break that chain and re-scan everything each run.
+pve_backup_snapshot_name: restic
+
+# The snapshot is destroyed once restic is done. Keeping it would pin every
+# block deleted since it was taken -- the pool would slowly grow by exactly the
+# data you thought you had removed.
+# 03:00 rather than systemd's "daily", which means midnight -- the busiest slot
+# on this host. dpkg-db-backup runs at 00:00, logrotate at 00:44,
+# pve-daily-update at 01:20, and the monthly zpool scrub starts at 00:24 and
+# ran 2h23m the last time it went. 03:00 is clear of that cluster and of the
+# scrub's usual finish, and ahead of man-db at 04:41 and cron.daily at 06:25.
+pve_backup_on_calendar: "*-*-* 03:00:00"
+pve_backup_randomized_delay: 30m
+
+# --- Retention --------------------------------------------------------------
+#
+# Applied to restic's own snapshots, not ZFS's. A year of monthlies costs very
+# little when the data deduplicates and only the changed blocks are stored.
+pve_backup_keep_daily: 7
+pve_backup_keep_weekly: 4
+pve_backup_keep_monthly: 12
+# Three years rather than the one that daily/weekly/monthly alone would give.
+# Because a snapshot kept for a year shares nearly every chunk with its
+# neighbours, this costs about two extra snapshots and almost no storage -- and
+# it covers the realistic case, which is noticing a file is corrupt or missing
+# long after the day it happened.
+pve_backup_keep_yearly: 3
+
+# --- Proving it restores ----------------------------------------------------
+#
+# `restic check` above is structural: it confirms every blob the index claims
+# exists, without reading one. That catches a repository missing a pack file
+# and misses a repository handing back bytes that are not the bytes that went
+# in. The second failure mode stays invisible until the day something is
+# actually needed, which is the worst possible day to discover it.
+#
+# So once a week a few real files are restored from B2 and compared to the
+# originals with cmp. Not the whole archive -- `restic dump` fetches only the
+# blobs belonging to the path it is given, so this is a few megabytes over the
+# uplink, not 74 gigabytes.
+pve_backup_verify_script_path: /usr/local/sbin/restic-verify
+
+# Per dataset, so with documents and photos this is four files a week. Small
+# enough to be free, and over a year it is two hundred files from all over the
+# archive rather than the same two.
+pve_backup_verify_sample: 2
+
+# How long a file's content must have been stable to be worth comparing. Its
+# mtime alone -- the second half of the question, whether the file was present
+# when the backup ran, is answered against the snapshot's own timestamp rather
+# than a fixed age. It has to be: every inode on this pool carries the ctime of
+# the migration that put it there, so any fixed ctime threshold matches nothing
+# until that many days after a migration.
+pve_backup_verify_min_age_days: 180
+
+# 100M. Keeps a weekly unattended job from pulling a 4G video down a home
+# uplink; the point is a sample, not coverage.
+pve_backup_verify_max_bytes: 104857600
+
+# Sunday morning, deliberately late. The nightly backup starts at 03:00 and a
+# large run has gone past 05:50, and its prune holds an exclusive repository
+# lock that would fail a restore attempted underneath it.
+pve_backup_verify_on_calendar: "Sun *-*-* 09:00:00"
+pve_backup_verify_randomized_delay: 15m

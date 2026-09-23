@@ -1,0 +1,42 @@
+---
+# Miniflux, from its own .deb, with Postgres beside it.
+#
+# No Docker, unlike Immich: Miniflux ships a Debian package and a systemd unit,
+# so a container running it needs a database and one binary, and there is no
+# reason to put a container runtime underneath that.
+#
+# This one is deliberately the service that goes on the public internet. It is
+# a single Go binary with a narrow feature set, it serves text -- so neither
+# Cloudflare's 100 MB body cap nor its rules on proxying video apply -- and if
+# it were ever broken into, what leaks is a list of the feeds you read.
+
+miniflux_version: "2.3.3"
+miniflux_deb_url: >-
+  https://github.com/miniflux/v2/releases/download/{{ miniflux_version }}/miniflux_{{ miniflux_version }}_amd64.deb
+
+# Bound to the LAN, not the loopback: cloudflared runs in this container and
+# could use 127.0.0.1, but the reverse proxy is a different container and
+# reaches this one over the network.
+miniflux_listen: "0.0.0.0:8080"
+miniflux_port: 8080
+
+miniflux_db_name: miniflux
+miniflux_db_user: miniflux
+
+# Written by hand outside the repository; only the destinations are named here.
+miniflux_db_password_entry: miniflux/db-password.txt
+miniflux_admin_password_entry: miniflux/admin-password.txt
+miniflux_admin_username: ark
+
+# How often feeds are polled, and how hard. The defaults are gentler than most
+# people want and this is a home instance with a handful of users.
+miniflux_polling_frequency: 30
+miniflux_batch_size: 100
+
+# --- Public access ----------------------------------------------------------
+miniflux_domain: "rss.{{ public_domain }}"
+miniflux_tunnel_id: "{{ lookup('keepass', miniflux_tunnel_id_entry) }}"
+miniflux_tunnel_id_entry: miniflux/tunnel-id
+miniflux_tunnel_credentials_entry: miniflux/tunnel-credentials.json
+miniflux_cloudflared_version: "2026.9.1"
+miniflux_cf_token_entry: cloudflare/token.txt

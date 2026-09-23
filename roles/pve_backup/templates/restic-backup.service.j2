@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up the irreplaceable datasets to Backblaze B2
+# The pool must be there. Without this the unit can run during early boot,
+# fail to find the mountpoints, and report a successful backup of nothing.
+After=zfs-mount.service network-online.target
+Wants=network-online.target
+RequiresMountsFor={{ pve_backup_datasets | map(attribute='mountpoint') | join(' ') }}
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ pve_backup_env_path }}
+ExecStart={{ pve_backup_script_path }}
+# Reading every file in the share tree, and ZFS snapshot creation, both need it.
+User=root
+Nice=10
+IOSchedulingClass=idle

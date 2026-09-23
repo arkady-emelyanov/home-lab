@@ -1,0 +1,52 @@
+---
+- name: Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ pve_ddns_token_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the token
+  ansible.builtin.copy:
+    content: "{{ lookup('keepass', pve_ddns_token_entry) }}\n"
+    dest: "{{ pve_ddns_token_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install the updater
+  ansible.builtin.template:
+    src: cloudflare-ddns.j2
+    dest: "{{ pve_ddns_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - cloudflare-ddns.service
+    - cloudflare-ddns.timer
+  notify: Reload systemd
+
+- name: Update the record now
+  # Run once during the converge rather than waiting for the timer, so a bad
+  # token or an unreachable API fails here, where someone is watching.
+  ansible.builtin.command:
+    cmd: "{{ pve_ddns_script_path }}"
+  register: pve_ddns_run
+  changed_when: "'is already' not in pve_ddns_run.stdout"
+
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: cloudflare-ddns.timer
+    state: started
+    enabled: true
+    daemon_reload: true

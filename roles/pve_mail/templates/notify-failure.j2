@@ -1,0 +1,36 @@
+#!/bin/sh
+# {{ ansible_managed }}
+#
+# Mailed when a watched unit fails. Carries the status and the tail of the
+# journal, because "restic-backup failed" without the reason means opening a
+# terminal at the exact moment you are least able to.
+set -eu
+unit="$1"
+
+# One mail per unit per window. Without this, a unit on a five-minute timer
+# mails on every run for as long as the problem lasts, and the mail that
+# mattered is buried under 287 copies of itself.
+stamps=/run/notify-failure
+mkdir -p "$stamps"
+stamp="$stamps/$(echo "$unit" | tr -c 'A-Za-z0-9._-' '_')"
+
+if [ -f "$stamp" ]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$stamp") ))
+    if [ "$age" -lt {{ pve_mail_quiet_seconds }} ]; then
+        # Journalled rather than silent, so the suppression is visible to
+        # anyone reading the logs and wondering why no mail arrived.
+        echo "$unit failed again ${age}s after the last mail; not sending" >&2
+        exit 0
+    fi
+fi
+touch "$stamp"
+
+{
+    echo "To: root"
+    echo "Subject: [$(hostname -s)] $unit failed"
+    echo
+    systemctl status --full --no-pager "$unit" 2>&1 | head -30
+    echo
+    echo "--- last 40 lines of its journal ---"
+    journalctl -u "$unit" -n 40 --no-pager 2>&1
+} | /usr/sbin/sendmail -t

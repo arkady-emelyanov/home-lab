@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Timer]
+# The empty assignment is required. Timer directives accumulate, so without it
+# this would add a second schedule alongside the packaged `monthly` rather than
+# replacing it, and the pool would scrub twice.
+OnCalendar=
+OnCalendar={{ pve_storage_scrub_on_calendar }}

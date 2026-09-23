@@ -1,0 +1,117 @@
+---
+- name: Install postfix and the SASL modules it authenticates with
+  ansible.builtin.apt:
+    name:
+      - postfix
+      - libsasl2-modules
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Point postfix at the relay
+  # A satellite: it accepts nothing from the network and forwards everything
+  # local to Gmail. inet_interfaces stays on the loopback, so this does not
+  # become a mail server for the LAN.
+  ansible.builtin.blockinfile:
+    path: /etc/postfix/main.cf
+    marker: "# {mark} relay (ansible)"
+    block: |
+      relayhost = [{{ pve_mail_relay_host }}]:{{ pve_mail_relay_port }}
+      inet_interfaces = loopback-only
+      # IPv4 only. This host has no IPv6 default route, but postfix defaults to
+      # trying both -- so it resolves smtp.gmail.com to an AAAA it cannot reach
+      # and defers every message with a name service error that looks like DNS
+      # being broken rather than routing being absent.
+      inet_protocols = ipv4
+      smtp_sasl_auth_enable = yes
+      smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+      smtp_sasl_security_options = noanonymous
+      smtp_tls_security_level = encrypt
+      smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+      smtp_generic_maps = regexp:/etc/postfix/generic
+  notify: Reload postfix
+
+- name: Remove the empty relayhost the package ships
+  # Debian's main.cf sets `relayhost =` near the top. The block above sets it
+  # again, and postfix honours the last one -- but warns about the override on
+  # every single command, which makes real warnings easy to miss.
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: '^relayhost\s*=\s*$'
+    state: absent
+  notify: Reload postfix
+
+- name: Install the relay credentials
+  ansible.builtin.template:
+    src: sasl_passwd.j2
+    dest: /etc/postfix/sasl_passwd
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Rebuild the credential map
+
+- name: Rewrite every local sender to the account that authenticates
+  ansible.builtin.template:
+    src: generic.j2
+    dest: /etc/postfix/generic
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload postfix
+
+- name: Send root's mail somewhere it will be read
+  ansible.builtin.lineinfile:
+    path: /etc/aliases
+    regexp: '^root:'
+    line: "root: {{ pve_mail_to }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Rebuild the alias map
+
+- name: Install the failure notifier
+  ansible.builtin.template:
+    src: notify-failure.j2
+    dest: /usr/local/sbin/notify-failure
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the unit that runs it
+  ansible.builtin.template:
+    src: "notify-failure@.service.j2"
+    dest: /etc/systemd/system/notify-failure@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create the drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ pve_mail_watched_units }}"
+
+- name: Make the watched units report their own failure
+  # A drop-in rather than editing each unit: the units are written by their own
+  # roles, and this keeps who-gets-watched in one list here.
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.d/notify.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      OnFailure=notify-failure@%n.service
+  loop: "{{ pve_mail_watched_units }}"
+  notify: Reload systemd
+
+- name: Start postfix
+  ansible.builtin.systemd_service:
+    name: postfix
+    state: started
+    enabled: true

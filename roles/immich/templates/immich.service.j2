@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+#
+# Type=oneshot with RemainAfterExit, because the thing being run is a compose
+# project: the command returns once the containers are up, and the unit stands
+# for "this project is running" rather than for a process. --wait holds the
+# start until every service reports healthy, so a unit that says it started
+# means Immich answers.
+#
+# No Restart=: systemd refuses it on a oneshot, and it would be the wrong layer
+# anyway. A container that dies is restarted by docker, which the compose
+# project asks for itself. This unit exists for the other case -- the project
+# not being there at all.
+[Unit]
+Description=Immich
+Documentation=https://immich.app
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ immich_dir }}
+ExecStart=/usr/bin/docker compose up -d --remove-orphans --wait
+ExecStop=/usr/bin/docker compose down
+# The first start pulls the server, the machine-learning worker, Postgres and
+# Valkey -- several gigabytes before anything can become healthy.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

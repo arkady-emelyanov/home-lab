@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+tunnel: {{ site_tunnel_id }}
+credentials-file: {{ site_tunnel_credentials_path }}
+
+# Do not let a request for a hostname we did not configure fall through to
+# whatever happens to be listening: everything unmatched is refused.
+ingress:
+  - hostname: {{ site_domain }}
+    service: http://{{ site_nginx_address }}:{{ site_nginx_port }}
+  - hostname: www.{{ site_domain }}
+    service: http://{{ site_nginx_address }}:{{ site_nginx_port }}
+  - service: http_status:404

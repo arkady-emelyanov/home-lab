@@ -1,0 +1,37 @@
+---
+- name: Install WireGuard
+  ansible.builtin.apt:
+    name:
+      - wireguard-tools
+      - iptables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Require at least one client
+  # The server key itself needs no check: the lookup fails by name if it is
+  # missing, which says more than an assert could.
+  ansible.builtin.assert:
+    that:
+      - query('keepass', wireguard_clients_group, list=true)
+        | select('search', '[.]pub$') | list | length > 0
+    fail_msg: >-
+      No clients exist under {{ wireguard_clients_group }} in the database. A
+      server with no peers accepts nothing. Run scripts/wg-client add <name>.
+
+- name: Configure the tunnel
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart wireguard
+
+- name: Enable and start the tunnel
+  ansible.builtin.systemd_service:
+    name: wg-quick@wg0
+    state: started
+    enabled: true
+    daemon_reload: true

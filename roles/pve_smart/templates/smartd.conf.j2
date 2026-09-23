@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+#
+# One line, because DEVICESCAN means "every disk the system can see" and this
+# host has no disk that wants different treatment. Adding a disk by id here
+# would mean a replaced disk is silently unmonitored under its new serial.
+#
+#   -d removable   do not fail the whole daemon over a device that went away
+#   -n standby     do not spin an idle disk up merely to ask how it is
+#   -a             the default attribute set: health, errors, self-test log
+#   -s ...         the schedules below, which is the part Debian omits
+#   -m / -M exec   hand findings to smartd-runner, which mails them
+#
+# The schedule syntax is T/MM/DD/d/HH -- test type, month, day of month, day of
+# week, hour. A dot is "any".
+DEVICESCAN -d removable -n standby -a \
+  -s ({{ pve_smart_short_test }}|{{ pve_smart_long_test }}) \
+  -m {{ pve_smart_mail_to }} -M exec /usr/share/smartmontools/smartd-runner

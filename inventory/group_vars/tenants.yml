@@ -1,0 +1,22 @@
+---
+# How Ansible reaches a tenant.
+#
+# The hypervisor's connection details live in ~/.ssh/config, which is where they
+# belong. Tenants cannot: they run on DHCP and their address is discovered at
+# run time, so there is no fixed host to describe there. This is the exception,
+# and it is why it is written down here instead.
+
+# A container's root is not the host's root, and `pct create` authorises the
+# management key for it. There is no other account and nothing to escalate.
+ansible_user: root
+ansible_ssh_private_key_file: ~/.ssh/nas-ansible
+
+# Offer only that key. The agent holds several, and tenant_ssh sets
+# MaxAuthTries 3 -- without this, ssh can spend all three attempts on the wrong
+# keys and be refused before it reaches the right one.
+ansible_ssh_common_args: -o IdentitiesOnly=yes
+
+# Whether this tenant gets installed. Default on; set it false in a tenant's own
+# host_vars, where everything else describing it lives, for one you do not want
+# built. The play ends before the lxc role runs, so nothing is created.
+tenant_enabled: true

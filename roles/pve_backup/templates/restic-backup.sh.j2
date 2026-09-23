@@ -1,0 +1,41 @@
+#!/bin/sh
+# {{ ansible_managed }}
+set -eu
+
+SNAP={{ pve_backup_snapshot_name }}
+DATASETS="{{ pve_backup_datasets | map(attribute='dataset') | join(' ') }}"
+
+# Destroy the snapshots on the way out however we leave -- success, failure or
+# signal. A snapshot left behind by a crashed run would pin deleted blocks
+# indefinitely, and nothing would ever say so.
+cleanup() {
+    for DS in $DATASETS; do
+        zfs destroy "$DS@$SNAP" 2>/dev/null || true
+    done
+}
+trap cleanup EXIT INT TERM
+
+for DS in $DATASETS; do
+    zfs destroy "$DS@$SNAP" 2>/dev/null || true
+    zfs snapshot "$DS@$SNAP"
+done
+
+# Creating the repository is safe to attempt every run: if it already exists,
+# reading its config succeeds and init is skipped.
+restic cat config >/dev/null 2>&1 || restic init
+
+restic backup --tag nas-next --exclude-caches \
+    {{ pve_backup_datasets | map(attribute='mountpoint')
+       | map('regex_replace', '$', '/.zfs/snapshot/' ~ pve_backup_snapshot_name)
+       | join(' ') }}
+
+restic forget --tag nas-next --prune \
+    --keep-daily {{ pve_backup_keep_daily }} \
+    --keep-weekly {{ pve_backup_keep_weekly }} \
+    --keep-monthly {{ pve_backup_keep_monthly }} \
+    --keep-yearly {{ pve_backup_keep_yearly }}
+
+# Structural check only -- it verifies that every blob the index references is
+# present, without downloading the data. A backup nobody ever verifies is a
+# guess, and this is the cheap half of not guessing.
+restic check

@@ -1,0 +1,41 @@
+---
+# nginx behind a Cloudflare tunnel.
+#
+# The tunnel dials out, so there is no forwarded port, nothing listening on the
+# WAN, and no certificate to manage: TLS terminates at Cloudflare's edge with
+# their own publicly trusted certificate, and the hop from there to here is the
+# tunnel, which is already TLS. A Cloudflare Origin Certificate is for the other
+# arrangement, where Cloudflare connects inbound to a public address; there is
+# no inbound connection here, so there is nothing to present one to.
+
+site_domain: "{{ public_domain }}"
+
+# Locally managed, not token-managed. A tunnel run with --token takes its
+# configuration from the Cloudflare dashboard and ignores config.yml, which
+# would put the ingress rules somewhere this repository cannot describe. With a
+# credentials file the rules live below, in git, like everything else.
+site_tunnel_id: "{{ lookup('keepass', site_tunnel_id_entry) }}"
+site_tunnel_id_entry: site/tunnel-id
+site_tunnel_credentials_entry: cloudflare/tunnel-credentials.json
+site_tunnel_credentials_path: /etc/cloudflared/credentials.json
+site_config_path: /etc/cloudflared/config.yml
+
+# Pinned. cloudflared is the thing standing between the internet and this
+# container; it should change when someone decides it changes.
+site_cloudflared_version: "2026.9.1"
+
+# nginx binds the loopback only. The single path in is the tunnel, which runs
+# in this same container, so there is no reason for the listener to be visible
+# even on the LAN.
+site_nginx_address: 127.0.0.1
+site_nginx_port: 8080
+
+# Placeholder until there is something to serve. When a generated site lands
+# here, drop the error_page and let nginx serve the root normally.
+site_status_code: 418
+site_root: /var/www/site
+
+# The DNS record is created from the machine running Ansible, not from the
+# container. A public-facing tenant has no business holding a token that can
+# rewrite the zone's DNS -- it only ever needs its tunnel credentials.
+site_cf_token_entry: cloudflare/token.txt

@@ -1,0 +1,185 @@
+---
+# Creates the container if absent, gives it its mounts, devices and id mapping,
+# brings it up, and points the connection at whatever address DHCP gave it.
+#
+# Everything is delegated to the hypervisor. `pct` is root-only, and Proxmox
+# permits bind mounts and device passthrough only when the acting identity is
+# literally root@pam -- which the CLI is, and which no API credential can be
+# whatever its privileges, because the check is an exact string comparison
+# against a value that reads `root@pam!token` for any token. That one fact is
+# why this repository has no API client.
+
+- name: Read the container configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ lxc_vmid }}"
+  delegate_to: "{{ pve_host }}"
+  register: lxc_config
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Create {{ lxc_hostname }}
+  # pct does not start the container, so the id mapping below is in place before
+  # it ever boots.
+  ansible.builtin.command:
+    cmd: >-
+      pct create {{ lxc_vmid }} {{ lxc_template }}
+      --hostname {{ lxc_hostname }}
+      --cores {{ lxc_cores }}
+      --memory {{ lxc_memory }}
+      --features {{ lxc_features }}
+      --rootfs {{ lxc_storage }}:{{ lxc_disk }}
+      --unprivileged {{ 1 if lxc_unprivileged else 0 }}
+      --onboot {{ 1 if lxc_onboot else 0 }}
+      --ssh-public-keys {{ pve_public_key_path }}
+      --net0 name=eth0,bridge={{ lxc_bridge }},hwaddr={{ lxc_mac }},ip=dhcp
+      {% for m in lxc_mounts %}--mp{{ loop.index0 }} {{ m.host | default(m.volume) }},mp={{ m.path }},ro={{ 1 if m.ro else 0 }} {% endfor %}
+      {% for d in lxc_devices %}--dev{{ loop.index0 }} {{ d.path }},gid={{ d.gid }} {% endfor %}
+  delegate_to: "{{ pve_host }}"
+  when: lxc_config.rc != 0
+  changed_when: true
+
+- name: Map the share id through into {{ lxc_hostname }}
+  # One task per entry, matched by its exact text, rather than a marked block.
+  #
+  # blockinfile cannot be used here: Proxmox rewrites this file and relocates
+  # every lxc.* line to the end, outside any BEGIN/END markers. The markers
+  # survive but their contents move, so the next run sees an empty block and
+  # writes the entries a second time -- and a duplicated idmap makes the
+  # container refuse to start with "container uid 0 is also mapped by entry".
+  # Matching each line by content is immune to being moved.
+  ansible.builtin.lineinfile:
+    path: "/etc/pve/lxc/{{ lxc_vmid }}.conf"
+    line: "lxc.idmap: {{ item }}"
+    regexp: "^lxc\\.idmap: {{ item | regex_escape }}$"
+    state: present
+  loop: "{{ lxc_idmap }}"
+  loop_control:
+    label: "{{ item }}"
+  delegate_to: "{{ pve_host }}"
+  notify: Restart the container
+
+- name: Converge the resources of {{ lxc_hostname }}
+  # Set at creation, but a container outlives the first decision about how much
+  # it needs. Both apply immediately through cgroups, so there is nothing to
+  # restart.
+  ansible.builtin.command:
+    cmd: "pct set {{ lxc_vmid }} --cores {{ lxc_cores }} --memory {{ lxc_memory }}"
+  delegate_to: "{{ pve_host }}"
+  when: >-
+    ('cores: ' ~ lxc_cores) not in lxc_config.stdout_lines
+    or ('memory: ' ~ lxc_memory) not in lxc_config.stdout_lines
+  changed_when: true
+
+- name: Converge the features of {{ lxc_hostname }}
+  # Unlike cores and memory, this is read only when the container starts, so a
+  # change here does nothing until the container is next restarted. Deliberately
+  # not restarting it: this role is called for every tenant, and bouncing the
+  # DNS resolver or the fileserver mid-run is not something a converge should
+  # decide to do on its own.
+  ansible.builtin.command:
+    cmd: "pct set {{ lxc_vmid }} --features {{ lxc_features }}"
+  delegate_to: "{{ pve_host }}"
+  when: >-
+    ('features: ' ~ lxc_features) not in lxc_config.stdout_lines
+  changed_when: true
+
+- name: Converge the bind mounts of {{ lxc_hostname }}
+  # Only bind mounts. A volume mount point is allocated by Proxmox at creation
+  # and given an id of its own choosing, so there is no declared value to
+  # compare against and re-running `pct set` would allocate a second volume.
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ lxc_vmid }}
+      --mp{{ item.0 }} {{ item.1.host }},mp={{ item.1.path }},ro={{ 1 if item.1.ro else 0 }}
+  delegate_to: "{{ pve_host }}"
+  loop: "{{ range(lxc_mounts | length) | list | zip(lxc_mounts) | list }}"
+  loop_control:
+    label: "mp{{ item.0 }} {{ item.1.host | default(item.1.volume) }} -> {{ item.1.path }}"
+  # `pct set` is not idempotent on its own: it rewrites the config and stages a
+  # pending change even when nothing differs.
+  when:
+    - item.1.host is defined
+    - >-
+      ('mp' ~ item.0 ~ ': ' ~ item.1.host ~ ',mp=' ~ item.1.path ~
+       ',ro=' ~ (1 if item.1.ro else 0)) not in lxc_config.stdout_lines
+  changed_when: true
+  notify: Restart the container
+
+- name: Converge the devices of {{ lxc_hostname }}
+  ansible.builtin.command:
+    cmd: "pct set {{ lxc_vmid }} --dev{{ item.0 }} {{ item.1.path }},gid={{ item.1.gid }}"
+  delegate_to: "{{ pve_host }}"
+  loop: "{{ range(lxc_devices | length) | list | zip(lxc_devices) | list }}"
+  loop_control:
+    label: "dev{{ item.0 }} {{ item.1.path }}"
+  when: >-
+    ('dev' ~ item.0 ~ ': ' ~ item.1.path ~ ',gid=' ~ item.1.gid)
+    not in lxc_config.stdout_lines
+  changed_when: true
+  notify: Restart the container
+
+- name: Apply any pending configuration before connecting
+  ansible.builtin.meta: flush_handlers
+
+- name: Start the container
+  ansible.builtin.command:
+    cmd: "pct start {{ lxc_vmid }}"
+  delegate_to: "{{ pve_host }}"
+  register: lxc_start
+  changed_when: "'already running' not in (lxc_start.stderr | default(''))"
+  failed_when:
+    - lxc_start.rc != 0
+    - "'already running' not in (lxc_start.stderr | default(''))"
+
+- name: Wait for a DHCP address
+  # eth0 by name, not "the first IPv4 lxc-info reports". A tenant may bring up
+  # other interfaces -- qbittorrent has a WireGuard tunnel -- and lxc-info lists
+  # them all with no way to tell which is the LAN. Picking the first returned
+  # the tunnel address and Ansible then tried to connect through the VPN.
+  #
+  # DHCP has not necessarily completed by the time pct start returns.
+  ansible.builtin.command:
+    cmd: "pct exec {{ lxc_vmid }} -- ip -4 -o addr show dev eth0"
+  delegate_to: "{{ pve_host }}"
+  register: lxc_address
+  until: lxc_address.stdout is search('inet ')
+  retries: "{{ lxc_address_retries }}"
+  delay: "{{ lxc_address_delay }}"
+  changed_when: false
+  check_mode: false
+
+- name: Connect to the address it was given
+  ansible.builtin.set_fact:
+    ansible_host: "{{ lxc_address.stdout | regex_search('inet ([0-9.]+)', '\\1') | first }}"
+
+# Host key checking stays on, but a container we just built here is a special
+# case: its key is generated during the create above, so there is nothing to
+# verify it against, and it changes on every rebuild -- usually at the same
+# address, where a remembered key would block the connection outright.
+#
+# This is housekeeping rather than verification. Its value is that `ssh` works
+# afterwards, for a person, without a prompt or a manual ssh-keygen -R.
+- name: Read the container's host key
+  ansible.builtin.command:
+    cmd: "ssh-keyscan -t ed25519 {{ ansible_host }}"
+  delegate_to: localhost
+  register: lxc_hostkey
+  until: lxc_hostkey.stdout | length > 0
+  retries: 15
+  delay: 2
+  changed_when: false
+
+- name: Remember it
+  # known_hosts replaces the entry when the key differs, so a rebuilt container
+  # is re-trusted without a separate removal -- and an unchanged one reports no
+  # change, rather than being removed and re-added on every run.
+  ansible.builtin.known_hosts:
+    name: "{{ ansible_host }}"
+    key: "{{ lxc_hostkey.stdout_lines | select('search', 'ssh-ed25519') | first }}"
+    state: present
+  delegate_to: localhost
+
+- name: Wait for SSH on {{ lxc_hostname }}
+  ansible.builtin.wait_for_connection:
+    timeout: 120

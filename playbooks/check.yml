@@ -1,0 +1,74 @@
+---
+# Confirms everything this repository depends on, and changes nothing.
+#
+#   make check
+#
+# Each assertion names what failed and what to do about it, so a failure is
+# actionable without reading the role it came from.
+- name: Verify access and readiness
+  hosts: pve
+  gather_facts: true
+  tasks:
+    - name: Confirm we are root on the hypervisor
+      ansible.builtin.assert:
+        that:
+          - ansible_user_id == 'root'
+        fail_msg: >-
+          Connected as {{ ansible_user_id }}, not root. This repository runs as
+          root throughout: pct is root-only, and Proxmox permits bind mounts
+          only when the acting identity is literally root@pam. Check the
+          `proxmox` entry in ~/.ssh/config.
+
+    - name: Confirm this is a Proxmox node
+      ansible.builtin.command:
+        cmd: pveversion
+      changed_when: false
+      register: check_pveversion
+
+    - name: Confirm pct is present and the node answers
+      ansible.builtin.command:
+        cmd: pct list
+      changed_when: false
+
+    - name: Read the pool
+      ansible.builtin.command:
+        cmd: zpool list -H -o name,health tank
+      changed_when: false
+      register: check_pool
+      failed_when: check_pool.rc != 0 or 'ONLINE' not in check_pool.stdout
+
+    - name: Read the datasets that exist
+      ansible.builtin.command:
+        cmd: zfs list -H -o name
+      changed_when: false
+      register: check_datasets
+
+    - name: Confirm every declared dataset exists
+      ansible.builtin.assert:
+        that:
+          - item.name in check_datasets.stdout_lines
+        fail_msg: "{{ item.name }} does not exist. Run `make host`."
+      loop: "{{ pve_storage_datasets }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Confirm the container template is present
+      ansible.builtin.command:
+        cmd: "pveam list {{ lxc_template.split(':') | first }}"
+      changed_when: false
+      register: check_template
+      failed_when: lxc_template not in check_template.stdout
+
+    - name: Confirm the management key is where pct expects it
+      ansible.builtin.stat:
+        path: "{{ pve_public_key_path }}"
+      register: check_key
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "{{ check_pveversion.stdout }}"
+          - "pool tank: {{ check_pool.stdout }}"
+          - "datasets: {{ pve_storage_datasets | length }} declared, all present"
+          - "template: present"
+          - "management key on host: {{ 'yes' if check_key.stat.exists else 'no -- run make host' }}"

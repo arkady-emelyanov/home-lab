@@ -1,0 +1,77 @@
+# {{ ansible_managed }}
+# Managed by Ansible (roles/blocky). Edits here are overwritten.
+
+log:
+  level: {{ blocky_log_level }}
+
+ports:
+  dns: {{ blocky_dns_port }}
+  http: {{ blocky_http_port }}
+
+# Resolves the upstreams' own hostnames and the blocklist URLs, before
+# encrypted DNS is available to do it.
+bootstrapDns:
+  - {{ blocky_bootstrap_dns }}
+
+upstreams:
+  groups:
+    default:
+{% for upstream in blocky_upstreams %}
+      - {{ upstream }}
+{% endfor %}
+  strategy: {{ blocky_upstream_strategy }}
+
+{% if blocky_custom_dns %}
+customDNS:
+  customTTL: {{ blocky_custom_ttl }}
+  mapping:
+{% for name, address in blocky_custom_dns | dictsort %}
+    {{ name }}: {{ address if address is string else address | join(',') }}
+{% endfor %}
+
+{% endif %}
+{% if blocky_conditional_mapping or blocky_conditional_rewrite %}
+conditional:
+{% if blocky_conditional_rewrite %}
+  rewrite:
+{% for source, target in blocky_conditional_rewrite | dictsort %}
+    {{ source }}: {{ target }}
+{% endfor %}
+{% endif %}
+{% if blocky_conditional_mapping %}
+  mapping:
+{% for domain, resolver in blocky_conditional_mapping | dictsort %}
+    {{ domain }}: {{ resolver }}
+{% endfor %}
+{% endif %}
+
+{% endif %}
+blocking:
+  denylists:
+{% for group, urls in blocky_denylists | dictsort %}
+    {{ group }}:
+{% for url in urls %}
+      - {{ url }}
+{% endfor %}
+{% endfor %}
+{% if blocky_allowlists %}
+  allowlists:
+{% for group, entries in blocky_allowlists | dictsort %}
+    {{ group }}:
+{% for entry in entries %}
+      - {{ entry }}
+{% endfor %}
+{% endfor %}
+{% endif %}
+  clientGroupsBlock:
+    default:
+{% for group in blocky_denylists | sort %}
+      - {{ group }}
+{% endfor %}
+  loading:
+    refreshPeriod: {{ blocky_refresh_period }}
+
+caching:
+  minTime: {{ blocky_cache_min }}
+  maxTime: {{ blocky_cache_max }}
+  prefetching: {{ blocky_cache_prefetching | lower }}

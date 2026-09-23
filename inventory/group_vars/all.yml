@@ -1,0 +1,55 @@
+---
+# Facts about this installation that more than one role needs.
+
+# The hypervisor, as Ansible knows it. Roles delegate host-side work here.
+pve_host: proxmox
+
+# Where tenant containers come from and live.
+lxc_template: local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst
+lxc_storage: local-lvm
+lxc_bridge: vmbr0
+
+# The management key. Its public half is authorised for root on the hypervisor
+# and, via `pct create --ssh-public-keys`, inside every tenant from first boot.
+ssh_public_key_file: ~/.ssh/nas-ansible.pub
+# Where the hypervisor keeps a copy, for pct to read at container creation.
+pve_public_key_path: /root/.ssh/nas-ansible.pub
+
+# The id the share tree is owned by, mapped through unshifted into every tenant,
+# so a container's writes land with the ownership the data already has.
+share_uid: 65534
+share_gid: 65534
+
+# There is no secrets directory. Roles read what they need straight out of the
+# KeePassXC database through lookup_plugins/keepass.py, so credentials are never
+# written to disk at all -- not in this repository, and not beside it. Each role
+# names the entries it reads; nothing here describes their contents.
+#
+# Where the database is, and what unlocks it. The scripts under scripts/ read
+# these same three values out of this file, so there is one place to change.
+keepass_db: ~/Dropbox/automation.kdbx
+# No key file: the passphrase is the only thing that opens the database. Set
+# this to a path to add one as a second factor, which is what makes the copy in
+# Dropbox useless on its own.
+keepass_keyfile: null
+# The group every entry sits under, so an entry is named by the path below it.
+keepass_group: nas-next
+
+# --- What names this installation ------------------------------------------
+#
+# Not credentials, but not publishable either: the domain resolves to this
+# house's address, and the address is where every service described in this
+# repository is listening. Committing them would mean a reader of this
+# repository knows both what is running here and where to reach it, so they are
+# read from the database like everything else and only the entry names appear.
+#
+# A role that needs a public name derives it from public_domain rather than
+# spelling one out, so the zone is named in one place and a move is one edit.
+public_domain: "{{ lookup('keepass', 'identity/domain') }}"
+
+# Who Let's Encrypt and Gmail know this installation as, and where its mail is
+# filed. Two entries rather than one derived from the other: the second is a
+# plus-address of the first today, but which address authenticates and which is
+# delivered to is a decision, not an arithmetic.
+admin_email: "{{ lookup('keepass', 'identity/email') }}"
+admin_mail_to: "{{ lookup('keepass', 'identity/mail-to') }}"

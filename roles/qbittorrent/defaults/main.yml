@@ -1,0 +1,177 @@
+---
+# qBittorrent behind WireGuard. The container is declared in
+# inventory/host_vars/qbittorrent.yml.
+#
+# The two live together because the tunnel exists for this one client. Keeping
+# WireGuard out of the hypervisor's network namespace matters: a tunnel there
+# would share a routing table with the management plane, and AllowedIPs of
+# 0.0.0.0/0 would take SSH and the web UI with it.
+
+# --- WireGuard --------------------------------------------------------------
+#
+# The config is your provider's file, delivered verbatim from the database. The
+# role never templates it: it carries its own PostUp rules and a private key,
+# and rewriting someone else's tunnel config is how you get one that almost
+# works.
+qbittorrent_wg_interface: wg0
+qbittorrent_wg_entry: wireguard/wg0.conf
+
+# Surfshark answers am-evn.prod.surfshark.com with a 5-second TTL across two
+# addresses, and WireGuard resolves the endpoint exactly once at `wg-quick up`.
+# When that address leaves rotation the interface stays up and handshakes
+# silently stop -- which is the failure this tenant was built around.
+#
+# reresolve-dns.sh ships with wireguard-tools. Every interval it compares each
+# peer's last handshake against a threshold and, if stale, re-runs
+# `wg set <iface> peer <key> endpoint <host:port>`, picking up whatever the name
+# resolves to now. The tunnel is never torn down.
+qbittorrent_reresolve_interval: 30s
+# 135s: WireGuard rekeys about every 120s, so anything older means handshakes
+# are genuinely failing rather than the link merely being idle.
+#
+# This test only works because the config sets PersistentKeepalive. WireGuard
+# handshakes only when it has data to send, so an idle tunnel goes silent and
+# its handshake simply ages -- the watchdog would stop qBittorrent for being
+# idle, and with no client there would be no traffic, no handshake, and nothing
+# to start it again. Keepalive keeps a packet flowing every 25s, so a stale
+# handshake means the tunnel is broken rather than unused.
+#
+# reresolve-dns.sh applies the same threshold, so it depends on this too.
+qbittorrent_handshake_stale_after: 135
+
+# --- Kill switch ------------------------------------------------------------
+#
+# The hard boundary. Without it a dead tunnel means torrent traffic leaves over
+# your home address, and nothing says so.
+qbittorrent_lan: 192.168.0.0/24
+# Allowed to anywhere rather than to the endpoint's address, because that
+# address rotates. The handshake is the only thing this permits off-tunnel.
+qbittorrent_wg_port: 51820
+
+# --- qBittorrent ------------------------------------------------------------
+qbittorrent_user: qbittorrent
+qbittorrent_webui_port: 8080
+
+# Skip the login prompt for clients on the LAN.
+#
+# The alternative was worse in practice: qBittorrent stores its password hashed
+# in qBittorrent.conf, which this role templates and overwrites, so a password
+# set through the UI is wiped on the next converge. Managing the hash from the
+# secrets directory would work, but this box already serves the same LAN six
+# anonymous SMB shares -- a login on the torrent client is not the thing
+# standing between someone on the network and the data.
+#
+# What it does mean: anyone on the LAN can add and remove torrents, and change
+# the save path to anywhere the container can write -- which is the media
+# library and the downloads volume.
+qbittorrent_webui_auth_bypass_lan: true
+
+# The WebUI password, for anything not covered by the LAN bypass above. Read
+# from the KeePassXC database; only the name of the entry appears here.
+qbittorrent_password_entry: qbittorrent/password.txt
+qbittorrent_save_path: /media/movies
+qbittorrent_config_dir: /var/lib/qbittorrent/.config/qBittorrent
+
+# In-flight torrents live on the NVMe volume and are moved to the library only
+# once complete, so the pool never sees a random partial write.
+qbittorrent_incomplete_path: /media/downloads/incomplete
+
+# qBittorrent's own incoming port. Nothing reaches it -- the provider forwards
+# no port -- but it should not be the WireGuard port, which is what the kill
+# switch allows outbound for the handshake and nothing else.
+qbittorrent_incoming_port: 6881
+
+qbittorrent_preallocate: true
+
+# --- Is it actually going through the tunnel? -------------------------------
+#
+# A small endpoint the dashboard scrapes. It compares the address the internet
+# sees this container as with the address this house has, because that is the
+# only check that distinguishes "the tunnel is up" from "our traffic is using
+# it". wg0 existing, and even handshaking, proves neither.
+qbittorrent_health_port: 9000
+# Resolved to learn this site's own address. pve_ddns keeps it current.
+qbittorrent_health_home_name: "home.{{ public_domain }}"
+qbittorrent_health_echo_url: https://api.ipify.org
+# The dashboard asks every minute; there is no reason to ask a stranger for our
+# address that often.
+qbittorrent_health_cache_seconds: 120
+
+# --- Config format ----------------------------------------------------------
+#
+# qBittorrent stamps the config with the migration version it last applied. A
+# file without it looks like an old config, so on startup qBittorrent runs its
+# migrations over it -- and one of those rewrites the share-limit action,
+# discarding whatever this role just set. The symptom is a setting that is
+# correct on disk the moment Ansible writes it and has reverted by the time the
+# service has finished starting.
+#
+# Templating the whole file means declaring this too. Raise it only after
+# checking what a qBittorrent of the installed version writes here.
+qbittorrent_config_migration_version: 8
+
+# --- Share limits -----------------------------------------------------------
+#
+# A torrent stops being seeded once it has given back as much as it took, or
+# after a day, whichever comes first. qBittorrent applies both limits as an OR,
+# so a well-connected torrent leaves on ratio within the hour and a slow one
+# leaves on time having uploaded less.
+#
+# Ratio 1.0 is upload equal to download, measured in bytes over the life of the
+# torrent. Note that with no forwarded port this box can be hard to reach, so
+# the time limit is the one that will usually fire.
+#
+# There is no separate "enabled" key on disk: -1 is unlimited, and any other
+# value is the limit. Seeding time is in minutes.
+qbittorrent_max_ratio: 1.0
+qbittorrent_max_seeding_minutes: 1440
+
+# What happens when a limit is hit. `Remove` takes the torrent out of the list
+# and leaves the files alone -- which is the point, since by then the completed
+# download has already been moved into the library and the torrent is only an
+# entry in a list. The neighbouring value `RemoveWithContent` would delete the
+# media itself; `Stop` keeps the entry forever, which is what this replaces.
+qbittorrent_share_limit_action: Remove
+
+# --- Peer discovery ---------------------------------------------------------
+#
+# Every setting below is written to qBittorrent.conf, which qBittorrent itself
+# rewrites through Qt's QSettings whenever it saves. That rewrite sorts the
+# keys, drops every comment, and turns any `#` line it finds into a mangled key
+# of its own -- so the template that produces that file carries no comments at
+# all, and the reasoning for what is in it lives here instead.
+#
+# UPnP asks the LAN router to open an inbound port. Behind a VPN that achieves
+# nothing -- the tunnel is the only way in -- and the request is addressed to
+# the router, which the kill switch permits as LAN traffic, so it genuinely
+# leaves the container and announces what is running here.
+#
+# Note the key: under qBittorrent 5.x this is `[Network] PortForwardingEnabled`.
+# The older `Session\UseUPnP` is still accepted into the file and then ignored,
+# so setting it reads as correct while UPnP stays on.
+qbittorrent_port_forwarding: false
+
+# Local Service Discovery multicasts for peers on the attached network. Bound to
+# wg0 it multicasts into the tunnel, where there is nobody to find.
+qbittorrent_lsd: false
+
+# DHT and PeX stay on, and the reason is the same one that turns the others off.
+# With no forwarded port this box can only make outgoing connections, so these
+# are how it finds peers at all. Disabling them -- which is what qBittorrent's
+# "anonymous mode" does -- would leave very little to connect to, and buys no
+# privacy that the tunnel does not already provide.
+qbittorrent_dht: true
+qbittorrent_pex: true
+
+# --- Disk IO ----------------------------------------------------------------
+#
+# Deliberately unset. libtorrent 2.x removed its own disk cache in favour of
+# memory-mapped files and the OS page cache, so `Session\DiskCacheSize` is
+# still accepted and then ignored -- another knob that reads as tuned while
+# doing nothing. The live equivalent is libtorrent's working-set limit, whose
+# default is fine in this container.
+#
+# Memory-mapped IO is worth a second look because it is known to behave badly on
+# ZFS, whose ARC is not unified with the page cache. It does not apply here:
+# in-flight pieces are written to the NVMe volume, which is ext4, and the
+# finished torrent reaches the ZFS library as one sequential copy.

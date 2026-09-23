@@ -1,0 +1,22 @@
+---
+# The DNS container. Declared here rather than in the role because this is
+# per-host data and the vmid already lives in inventory.
+lxc_vmid: 112
+
+# Fixed MAC, so the router's reservation survives the container being rebuilt.
+# BC:24:11 is Proxmox's own OUI; the last octet is the vmid in hex (112 = 0x70).
+lxc_mac: "BC:24:11:00:00:70"
+
+lxc_hostname: blocky
+# Measured, not guessed: blocky's peak RSS is 46 MiB with all 27 lists loaded --
+# the same during a full refresh as at rest, since ~690k domains cost about 67
+# bytes each in its set and parsing does not spike. The whole container runs in
+# about 50 MB. 256 is five times what it needs.
+lxc_cores: 2
+lxc_memory: 256
+lxc_disk: 4
+
+# No bind mounts. DNS holds nothing worth keeping off the root disk: the config
+# comes from Ansible and the blocklists are re-downloaded on start, so a rebuilt
+# container is identical to the one it replaced.
+lxc_mounts: []

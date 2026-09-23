@@ -1,0 +1,16 @@
+---
+- name: Load the modules now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ pve_kernel_modules }}"
+
+- name: Load them at every boot
+  # A template rather than copy with inline content: ansible_managed is injected
+  # by the template action and is undefined anywhere else.
+  ansible.builtin.template:
+    src: modules-load.conf.j2
+    dest: /etc/modules-load.d/nas-next.conf
+    owner: root
+    group: root
+    mode: "0644"

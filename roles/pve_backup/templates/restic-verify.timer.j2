@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Weekly proof that the offsite backup restores
+
+[Timer]
+OnCalendar={{ pve_backup_verify_on_calendar }}
+RandomizedDelaySec={{ pve_backup_verify_randomized_delay }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

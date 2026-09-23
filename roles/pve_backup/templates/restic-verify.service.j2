@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Restore sample files from B2 and compare them byte for byte
+After=zfs-mount.service network-online.target
+Wants=network-online.target
+RequiresMountsFor={{ pve_backup_datasets | map(attribute='mountpoint') | join(' ') }}
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ pve_backup_env_path }}
+ExecStart={{ pve_backup_verify_script_path }}
+User=root
+Nice=10
+IOSchedulingClass=idle

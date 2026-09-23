@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+"""Point {{ pve_ddns_record }} at this site's current public address."""
+
+import json
+import sys
+import urllib.error
+import urllib.request
+
+API = "https://api.cloudflare.com/client/v4"
+ZONE = "{{ pve_ddns_zone }}"
+RECORD = "{{ pve_ddns_record }}"
+TTL = {{ pve_ddns_ttl }}
+PROXIED = {{ 'True' if pve_ddns_proxied else 'False' }}
+
+# Read from the file rather than taken as an argument or an environment
+# variable: both are readable from /proc by any local user.
+with open("{{ pve_ddns_token_path }}", encoding="utf-8") as fh:
+    TOKEN = fh.read().strip()
+
+
+def api(path, method="GET", body=None):
+    req = urllib.request.Request(
+        f"{API}/{path}",
+        method=method,
+        data=json.dumps(body).encode() if body else None,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        payload = json.load(exc)
+    if not payload.get("success"):
+        errors = "; ".join(
+            f"{e.get('code')} {e.get('message')}" for e in payload.get("errors", [])
+        )
+        sys.exit(f"cloudflare: {method} {path}: {errors or 'request failed'}")
+    return payload["result"]
+
+
+def public_address():
+    # Cloudflare's own endpoint, so this depends on nothing the rest of the
+    # script does not already depend on.
+    with urllib.request.urlopen(
+        "https://cloudflare.com/cdn-cgi/trace", timeout=30
+    ) as resp:
+        for line in resp.read().decode().splitlines():
+            key, _, value = line.partition("=")
+            if key == "ip":
+                return value
+    sys.exit("could not determine the public address")
+
+
+address = public_address()
+
+# Asking Cloudflare what the record says, rather than trusting a local cache of
+# what we last wrote, means a record changed by hand is corrected on the next
+# run instead of staying wrong until the address happens to move.
+zones = api(f"zones?name={ZONE}")
+if not zones:
+    sys.exit(f"no zone {ZONE} is visible to this token")
+zone_id = zones[0]["id"]
+
+records = api(f"zones/{zone_id}/dns_records?type=A&name={RECORD}")
+desired = {
+    "type": "A",
+    "name": RECORD,
+    "content": address,
+    "ttl": TTL,
+    "proxied": PROXIED,
+}
+
+if not records:
+    api(f"zones/{zone_id}/dns_records", "POST", desired)
+    print(f"created {RECORD} -> {address}")
+elif records[0]["content"] != address or records[0]["proxied"] != PROXIED:
+    api(f"zones/{zone_id}/dns_records/{records[0]['id']}", "PUT", desired)
+    print(f"updated {RECORD}: {records[0]['content']} -> {address}")
+else:
+    print(f"{RECORD} is already {address}")

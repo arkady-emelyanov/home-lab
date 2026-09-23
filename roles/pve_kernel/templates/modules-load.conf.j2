@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Modules the tenants need. A container cannot load these itself.
+{% for module in pve_kernel_modules %}
+{{ module }}
+{% endfor %}

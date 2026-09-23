@@ -1,0 +1,13 @@
+---
+# The health dashboard: what is up, and what is about to expire.
+lxc_vmid: 119
+lxc_mac: "BC:24:11:00:00:77"
+
+lxc_hostname: gatus
+
+# One small Go process and the docker that carries it.
+lxc_cores: 1
+lxc_memory: 512
+lxc_disk: 8
+
+lxc_mounts: []

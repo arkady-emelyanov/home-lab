@@ -1,0 +1,39 @@
+---
+# The hypervisor. Converges; safe to re-run.
+#
+#   make host
+#
+# Knows nothing about tenants.
+- name: Configure the Proxmox host
+  hosts: pve
+  gather_facts: true
+  # Tagged so one part can be converged on its own: pve_storage walks the share
+  # tree and waits on ZFS, which is slow whenever the pool is busy, and there is
+  # no reason to sit through it to change the mail relay.
+  #
+  #   make host              everything
+  #   make host TAGS=mail    just that role
+  roles:
+    - role: pve_repos
+      tags: repos
+    - role: pve_kernel
+      tags: kernel
+    - role: pve_ssh
+      tags: ssh
+    - role: pve_storage
+      tags: storage
+    - role: pve_backup
+      tags: backup
+    - role: pve_vzdump
+      tags: vzdump
+    - role: pve_ddns
+      tags: ddns
+    - role: pve_smart
+      tags: smart
+    - role: pve_updates
+      tags: updates
+    # Last, because it writes an OnFailure drop-in for each unit the roles
+    # above install, and reading that list in one place is only useful if the
+    # list is complete by the time it runs.
+    - role: pve_mail
+      tags: mail

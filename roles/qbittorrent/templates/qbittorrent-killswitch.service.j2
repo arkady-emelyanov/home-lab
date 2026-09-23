@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Drop all traffic that is not going through the tunnel
+# Before the tunnel and before qBittorrent, so there is never a window in which
+# the client is running and the rules are not in place.
+Before=wg-quick@{{ qbittorrent_wg_interface }}.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/local/bin/qbittorrent-killswitch.sh
+
+[Install]
+WantedBy=multi-user.target

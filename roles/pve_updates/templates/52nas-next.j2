@@ -1,0 +1,31 @@
+// {{ ansible_managed }}
+//
+// Numbered above 50unattended-upgrades so these win where they overlap. The
+// packaged file is left alone.
+
+// #clear is apt.conf syntax, not a comment. It is load-bearing: a list in
+// apt.conf APPENDS, so without it these origins are added to the ones
+// 50unattended-upgrades already set -- which include label=Debian, the whole
+// of stable rather than just its security pocket. Verified by reading back
+// `unattended-upgrade --dry-run --debug`, which prints the list it resolved.
+#clear Unattended-Upgrade::Origins-Pattern;
+
+Unattended-Upgrade::Origins-Pattern {
+{% for origin in pve_updates_origins %}
+    "{{ origin }}";
+{% endfor %}
+};
+
+Unattended-Upgrade::Mail "{{ pve_updates_mail_to }}";
+Unattended-Upgrade::MailReport "{{ pve_updates_mail_report }}";
+
+Unattended-Upgrade::Automatic-Reboot "{{ 'true' if pve_updates_reboot else 'false' }}";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "{{ 'true' if pve_updates_remove_unused_kernels else 'false' }}";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+
+// A package whose upgrade needs a config-file decision is left alone and
+// reported, rather than answered by a default nobody chose.
+Dpkg::Options {
+    "--force-confdef";
+    "--force-confold";
+};

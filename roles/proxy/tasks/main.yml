@@ -1,0 +1,162 @@
+---
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Find the zone
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones?name={{
+        proxy_public_domain.split('.')[-2:] | join('.') }}
+    headers:
+      Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
+  delegate_to: localhost
+  register: proxy_zone
+  no_log: true
+
+- name: Install certbot and the Cloudflare DNS plugin
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install the Cloudflare token for certbot
+  # DNS-01 writes a TXT record to prove control of the name, so Let's Encrypt
+  # never connects inbound and no port has to be open for issuance. The token is
+  # the same Zone:DNS:Edit one everything else here uses.
+  ansible.builtin.template:
+    src: cloudflare.ini.j2
+    dest: /etc/letsencrypt/cloudflare.ini
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Obtain the certificate for {{ proxy_public_domain }}
+  # creates: makes this run once. certbot's own timer renews it afterwards;
+  # asking it again here would be a second path to the same thing.
+  ansible.builtin.command:
+    cmd: >-
+      certbot certonly --non-interactive --agree-tos
+      --dns-cloudflare
+      --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+      --dns-cloudflare-propagation-seconds 30
+      --email {{ proxy_certbot_email }}
+      -d {{ proxy_public_domain }}
+    creates: "{{ proxy_cert_dir }}/fullchain.pem"
+
+- name: Create the renewal hook directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Reload nginx when a certificate is renewed
+  # certbot renews from its own timer, at which point nginx is still holding the
+  # certificate it read at startup. Without this the site serves an expired one
+  # until something else happens to restart it.
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      systemctl reload nginx
+
+- name: Enable certbot's renewal timer
+  ansible.builtin.systemd_service:
+    name: certbot.timer
+    state: started
+    enabled: true
+
+- name: Publish the DNS record for {{ proxy_public_domain }}
+  # A CNAME to the name pve_ddns already keeps current, so the address is
+  # tracked in one place. DNS only: proxied, TLS would terminate at Cloudflare
+  # and the video would cross their network.
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ proxy_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ proxy_public_domain }}"
+      content: "{{ proxy_public_cname_target }}"
+      proxied: false
+      ttl: 60
+    status_code: [200, 400]
+  delegate_to: localhost
+  register: proxy_dns
+  changed_when: proxy_dns.status == 200
+  failed_when: >-
+    proxy_dns.status == 400
+    and 'already exists' not in (proxy_dns.json.errors | map(attribute='message') | join(' '))
+  no_log: true
+
+- name: Remove the default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Configure the proxied sites
+  ansible.builtin.template:
+    src: proxy.conf.j2
+    dest: /etc/nginx/sites-available/proxy.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable them
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/proxy.conf
+    dest: /etc/nginx/sites-enabled/proxy.conf
+    state: link
+    owner: root
+    group: root
+  notify: Reload nginx
+
+- name: Configure the public site
+  ansible.builtin.template:
+    src: public.conf.j2
+    dest: /etc/nginx/sites-available/public.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the public site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/public.conf
+    dest: /etc/nginx/sites-enabled/public.conf
+    state: link
+    owner: root
+    group: root
+  notify: Reload nginx
+
+- name: Check the configuration before anything reloads it
+  # Not the template's `validate`, which tests the file on its own: a server
+  # block is only valid inside http {}, so a fragment never passes standalone.
+  # This runs once the symlink exists, so nginx tests the whole configuration
+  # as it will actually be read. A failure here aborts the play before the
+  # reload handler, and nginx keeps serving the configuration it already has.
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+
+- name: Start nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: started
+    enabled: true

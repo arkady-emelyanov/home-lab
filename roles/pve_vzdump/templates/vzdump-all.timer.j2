@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Daily container backup to the pool
+
+[Timer]
+OnCalendar={{ pve_vzdump_on_calendar }}
+RandomizedDelaySec={{ pve_vzdump_randomized_delay }}
+# A night the host was off should still produce a dump when it comes back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

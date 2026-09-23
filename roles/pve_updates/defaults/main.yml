@@ -1,0 +1,51 @@
+---
+# Applying the security updates automatically, and nothing else automatically.
+#
+# apt-daily.timer already downloads package lists every day. Nothing installs
+# them, so the host sat on 181 pending packages including security fixes for
+# util-linux, xz-utils, sqlite3 and samba -- patched upstream, downloaded, and
+# never applied.
+#
+# --- Is this safe? ----------------------------------------------------------
+#
+# It is safe for the Debian security pocket, and it is NOT safe for everything,
+# which is why the origins below are a short list rather than a wildcard.
+#
+# Debian security uploads are minimal patches against the version already
+# installed. They are built to change behaviour as little as a fix allows,
+# because the whole stable release contract depends on that. Applying them
+# unattended is the recommended configuration and the one Debian designs for.
+#
+# The Proxmox origin is deliberately absent. Those packages are not minimal
+# patches: pve-manager, the kernel and the ZFS modules move in version, and a
+# ZFS userland upgraded away from a running kmod is exactly the situation you
+# want to be awake for. Proxmox upgrades stay a thing a person does, with a
+# reboot planned. Same for stable-updates, which is where things like tzdata
+# and antivirus data live -- low risk, but no reason to take it unattended.
+#
+# So: security fixes land by themselves; everything else waits for `apt
+# full-upgrade` run by hand.
+pve_updates_origins:
+  - 'origin=Debian,codename=${distro_codename}-security,label=Debian-Security'
+
+# Nothing here reboots itself. The pool imports, ten containers start, and a
+# reboot that happened at 06:00 without anyone deciding it should is a reboot
+# nobody watched. A kernel update that needs one will say so in the mail and
+# wait.
+pve_updates_reboot: false
+
+# Only when it breaks.
+#
+# on-change would mail every time a security update lands, which is a handful
+# of times a month and tells you something you did not need to act on. What
+# was installed is recorded anyway, in /var/log/unattended-upgrades/ and in
+# `journalctl -u unattended-upgrades`, and `apt list --upgradable` says what is
+# still waiting. Mail is reserved for the case where the upgrade itself failed
+# and packages are half-configured, which does need a person.
+pve_updates_mail_to: root
+pve_updates_mail_report: only-on-error
+
+# Old kernels are Proxmox's business, not unattended-upgrades'. Letting it
+# decide a kernel is unused on a host that boots from ZFS is a risk with no
+# upside; /boot has room.
+pve_updates_remove_unused_kernels: false

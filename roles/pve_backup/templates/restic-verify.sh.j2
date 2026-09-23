@@ -1,0 +1,125 @@
+#!/bin/sh
+# {{ ansible_managed }}
+#
+# Proves the offsite backup can actually give a file back.
+#
+# `restic check`, which the nightly run already does, verifies that every blob
+# the index references is present. It never reads one. So it catches a repository
+# that has lost a pack file and misses a repository that is returning bytes
+# which are not the bytes that went in -- and the second failure is the one that
+# is invisible until the day it matters.
+#
+# This restores a handful of real files and compares them to the originals byte
+# for byte. Nothing is downloaded but the files themselves: `restic dump` fetches
+# only the blobs for the path it is given, so verifying four files out of 32,000
+# costs a few megabytes rather than 74 gigabytes.
+set -eu
+
+SNAP={{ pve_backup_snapshot_name }}
+SAMPLE={{ pve_backup_verify_sample }}
+MIN_AGE={{ pve_backup_verify_min_age_days }}
+MAX_BYTES={{ pve_backup_verify_max_bytes }}
+
+work=$(mktemp -d /var/tmp/restic-verify.XXXXXX)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+checked=0
+failed=0
+
+# When the newest snapshot was taken. A file whose inode predates it was on
+# disk when the backup ran and must therefore be in the repository; a file
+# newer than it might legitimately not be yet. Without this the job cannot tell
+# "the backup lost a file" from "the backup has not seen this file", and only
+# the first is worth waking anyone for.
+taken=$(restic snapshots --json --latest 1 --tag nas-next \
+        | python3 -c 'import json, sys, datetime
+snapshots = json.load(sys.stdin)
+if not snapshots:
+    raise SystemExit("the repository holds no snapshot to verify against")
+print(int(datetime.datetime.fromisoformat(snapshots[0]["time"]).timestamp()))')
+
+verify_dataset() {
+    live="$1"
+
+    # The path restic recorded. Backups are taken from a ZFS snapshot, so what
+    # is in the repository is the snapshot path, not the live one -- see
+    # pve_backup_snapshot_name for why that name is fixed.
+    stored="$live/.zfs/snapshot/$SNAP"
+
+    # Which files are safe to compare, by two clocks that answer two questions:
+    #
+    #   -mtime +$MIN_AGE     has the content been stable long enough that the
+    #                        copy in the backup should still match the file on
+    #                        disk? This is the "modified long ago" part.
+    #
+    #   ! -newerct @$taken   was the inode already there when the snapshot was
+    #                        taken? ctime is when the inode last changed, which
+    #                        for a file copied onto this pool is the day it was
+    #                        copied, not the day it was written. Every file here
+    #                        has a ctime of the migration and an mtime going
+    #                        back to 1981, so a fixed age on ctime would match
+    #                        nothing for six months after any migration. Against
+    #                        the snapshot time it is exact and correct today.
+    #
+    # Size-capped because this runs weekly and unattended; a sample is meant to
+    # be cheap.
+    find "$live" -type f \
+        -mtime +"$MIN_AGE" ! -newerct "@$taken" -size -"$MAX_BYTES"c \
+        -print 2>/dev/null | shuf -n "$SAMPLE" > "$work/candidates" || true
+
+    if [ ! -s "$work/candidates" ]; then
+        echo "no file in $live is eligible; nothing to verify there" >&2
+        return 0
+    fi
+
+    # Redirected from a file rather than piped, so the counters below are
+    # incremented in this shell and not in a subshell that then exits.
+    while IFS= read -r file; do
+        rel=${file#"$live/"}
+        out="$work/restored"
+
+        if ! restic dump --quiet --tag nas-next latest "$stored/$rel" \
+                > "$out" 2>"$work/error"; then
+            # The file was on disk before the snapshot was taken and is not in
+            # it. That is a hole in the backup, not a timing artefact.
+            echo "ABSENT   $rel"
+            sed 's/^/           /' "$work/error"
+            failed=$((failed + 1))
+            checked=$((checked + 1))
+            continue
+        fi
+
+        if cmp -s "$out" "$file"; then
+            echo "ok       $rel ($(wc -c < "$out") bytes)"
+        else
+            # Deliberately loud. Either the repository returned different bytes
+            # than were stored, or the file changed since the backup despite
+            # its mtime saying otherwise. Both want a person.
+            echo "MISMATCH $rel"
+            echo "           stored $(wc -c < "$out") bytes, live $(wc -c < "$file") bytes"
+            failed=$((failed + 1))
+        fi
+
+        checked=$((checked + 1))
+        rm -f "$out"
+    done < "$work/candidates"
+}
+
+{% for entry in pve_backup_datasets %}
+verify_dataset {{ entry.mountpoint }}
+{% endfor %}
+
+# Verifying nothing is a failure, not a pass. A find that silently matched no
+# files, a mountpoint that moved, a dataset renamed in inventory -- each would
+# otherwise report success every week forever.
+if [ "$checked" -eq 0 ]; then
+    echo "nothing was verified" >&2
+    exit 1
+fi
+
+if [ "$failed" -gt 0 ]; then
+    echo "$failed of $checked files did not come back intact" >&2
+    exit 1
+fi
+
+echo "$checked files restored from B2 and compared byte for byte; all match"

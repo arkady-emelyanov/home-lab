@@ -1,0 +1,54 @@
+---
+# Somewhere for failures to go.
+#
+# Everything on this host that can fail quietly -- the nightly backup, the DDNS
+# updater, smartd noticing a disk going -- reports by mail to root, and root has
+# nowhere to send it. This gives it somewhere.
+#
+# Postfix relays through Gmail rather than delivering directly: mail sent from a
+# residential address with no reverse DNS is refused or silently filed as spam
+# by every recipient worth reaching, which is the same as not sending it.
+
+pve_mail_relay_host: smtp.gmail.com
+pve_mail_relay_port: 587
+
+# Gmail refuses mail whose From is not the account that authenticated, so the
+# envelope sender is rewritten to this regardless of which local user sent it.
+pve_mail_username: "{{ admin_email }}"
+
+# Delivered to the plus-address, which Gmail labels on arrival. The From above
+# and the To here are deliberately different: one is who Gmail thinks is
+# sending, the other is how it gets filed.
+pve_mail_to: "{{ admin_mail_to }}"
+
+# An app password, not the account password -- Gmail will not accept the latter
+# over SMTP. Stored in the database; only the entry name appears here.
+#
+# Paste it however Gmail shows it. It displays as four groups of four, and the
+# spaces are stripped where it is used, so either form works.
+pve_mail_password_entry: mail/smtp-password.txt
+
+# The units that must not fail quietly. Each gets OnFailure pointing at the
+# template unit below, which mails what happened rather than that something did.
+# At most one mail per unit in this window. cloudflare-ddns runs every five
+# minutes, so an hour of Cloudflare being unreachable is twelve failures and a
+# day is 288 -- all saying the same thing. The first one is the useful one.
+#
+# Suppression is per unit, so a second service failing during the quiet window
+# still reaches you. The stamps live in /run, so a reboot clears them: a failure
+# that survives a restart is worth hearing about again.
+pve_mail_quiet_seconds: 3600
+
+pve_mail_watched_units:
+  - restic-backup.service
+  # The verification is watched separately from the backup it verifies. A
+  # backup that runs cleanly every night and cannot give a file back is the
+  # exact failure this pair exists to tell apart, so they must be able to fail
+  # independently and say which one did.
+  - restic-verify.service
+  - cloudflare-ddns.service
+  - vzdump-all.service
+  # An instance drop-in: systemd reads zfs-scrub@tank.service.d for this
+  # instance alone, so the packaged template unit is untouched and no other
+  # pool would inherit the notification.
+  - "zfs-scrub@{{ pve_storage_pool }}.service"

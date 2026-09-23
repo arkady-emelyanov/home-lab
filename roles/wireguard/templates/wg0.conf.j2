@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+#
+# Peers come from the database, one block per client. This loop is over data
+# that genuinely varies -- you add a client by running scripts/wg-client, not by
+# editing inventory.
+
+[Interface]
+Address    = {{ wireguard_server_address }}
+ListenPort = {{ wireguard_port }}
+PrivateKey = {{ lookup('keepass', wireguard_server_key_entry) }}
+
+# ip_forward is namespaced per network namespace, so this affects this container
+# alone -- the hypervisor's own forwarding stays off.
+PostUp   = sysctl -w net.ipv4.ip_forward=1
+PostUp   = iptables -A FORWARD -i %i -j ACCEPT
+PostUp   = iptables -A FORWARD -o %i -j ACCEPT
+PostUp   = iptables -t nat -A POSTROUTING -s {{ wireguard_subnet }} -o {{ wireguard_lan_interface }} -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT
+PostDown = iptables -D FORWARD -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s {{ wireguard_subnet }} -o {{ wireguard_lan_interface }} -j MASQUERADE
+{% for pub in query('keepass', wireguard_clients_group, list=true) | select('search', '[.]pub$') | sort %}
+{% set name = pub | regex_replace('\.pub$', '') %}
+
+[Peer]
+# {{ name }}
+PublicKey    = {{ lookup('keepass', wireguard_clients_group ~ '/' ~ pub) }}
+PresharedKey = {{ lookup('keepass', wireguard_clients_group ~ '/' ~ name ~ '.psk') }}
+# A single /32. On the server side AllowedIPs is a filter on what source address
+# this peer may use, so anything wider would let one client impersonate another.
+AllowedIPs   = {{ lookup('keepass', wireguard_clients_group ~ '/' ~ name ~ '.ip') }}/32
+{% endfor %}

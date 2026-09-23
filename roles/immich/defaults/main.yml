@@ -1,0 +1,55 @@
+---
+# Immich, run as its own docker compose project inside an unprivileged LXC.
+#
+# Docker rather than native packages because Immich ships only compose: the
+# server, the machine-learning worker, Postgres with two vector extensions and
+# Valkey are versioned together, and installing them separately means matching
+# extension builds to Immich releases by hand forever.
+#
+# Docker inside an unprivileged container works because the tenants carry
+# features=nesting=1 -- the flag that also fixed /tmp and /run/lock.
+
+immich_version: v3.2.2
+
+# Pinned exactly as upstream's own compose pins them: the two supporting images
+# by digest, so a retagged upstream image cannot change what runs here.
+immich_redis_image: "docker.io/valkey/valkey:9@sha256:70739f85ad2ee01a726a965584a0f94895f01b0c60b3cc8b0aeef11eaa6888cf"
+immich_postgres_image: "ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23"
+
+# Postgres 14 with vectorchord and pgvectors, matching the dump this library
+# came with (v2.6.3 / pg14.19, extensions `vector` and `vchord`). Immich v3
+# dropped pgvecto.rs, which would have meant a migration -- it does not apply
+# here because the old install was already past v1.133.0 and on VectorChord.
+
+immich_dir: /opt/immich
+immich_port: 2283
+
+# The library, as the container sees it. Immich lays out upload, thumbs,
+# encoded-video, profile and its own nightly database dumps beneath it.
+immich_upload_location: /data
+
+# Postgres lives in a docker volume on the container's disk, not on the pool.
+# A bind mount would need its own ownership fixing for the postgres uid, and
+# the durability it would buy is already bought better: Immich dumps the
+# database nightly into {{ immich_upload_location }}/backups, which is on the
+# pool. That is the same arrangement the k3s install had, and it is why this
+# library could be restored at all.
+immich_db_volume: pgdata
+
+# Written by hand into the secrets directory; only the destination is named
+# here. Postgres is reachable only from the compose network, but a password in
+# a repository is a password in a repository.
+immich_db_password_entry: immich/db-password.txt
+
+# --- Public access ----------------------------------------------------------
+#
+# Its own tunnel rather than an ingress rule on the site container's: the two
+# are unrelated services, and photos should not stop being reachable because
+# the web site's container is down.
+immich_domain: "photos.{{ public_domain }}"
+immich_tunnel_id: "{{ lookup('keepass', immich_tunnel_id_entry) }}"
+immich_tunnel_id_entry: immich/tunnel-id
+immich_tunnel_credentials_entry: immich/tunnel-credentials.json
+immich_cloudflared_version: "2026.9.1"
+
+immich_cf_token_entry: cloudflare/token.txt

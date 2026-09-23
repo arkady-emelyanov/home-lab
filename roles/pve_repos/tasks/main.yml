@@ -1,0 +1,44 @@
+---
+# Proxmox ships pointing at the enterprise repositories, which return 401
+# without a subscription and block every apt and pveam call until disabled.
+#
+# PVE 9 uses deb822 (.sources) files; the older one-line .list files are still
+# read, so both are dealt with.
+
+- name: Disable the enterprise repositories
+  ansible.builtin.replace:
+    path: "{{ item }}"
+    regexp: '^(?!#)(\s*)(Enabled:\s*.*)$'
+    replace: '\1Enabled: false'
+  loop:
+    - /etc/apt/sources.list.d/pve-enterprise.sources
+    - /etc/apt/sources.list.d/ceph.sources
+  failed_when: false
+  notify: Refresh apt cache
+
+- name: Remove the legacy one-line enterprise lists
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/pve-enterprise.list
+    - /etc/apt/sources.list.d/ceph.list
+  notify: Refresh apt cache
+
+- name: Enable the no-subscription repository
+  ansible.builtin.copy:
+    # proxmox.sources is the path the web UI writes to. A differently-named file
+    # would leave apt with two entries for the same repository and a
+    # duplicate-sources warning on every update, so this converges on the file
+    # the UI already manages and is a no-op when the repo was enabled by hand.
+    dest: /etc/apt/sources.list.d/proxmox.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pve
+      Suites: {{ ansible_distribution_release }}
+      Components: pve-no-subscription
+      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  notify: Refresh apt cache

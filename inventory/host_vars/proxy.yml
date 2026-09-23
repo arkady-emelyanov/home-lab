@@ -1,0 +1,16 @@
+---
+# The LAN reverse proxy: every home service on port 80, by name.
+lxc_vmid: 117
+lxc_mac: "BC:24:11:00:00:75"
+
+lxc_hostname: proxy
+
+# Reserve 192.168.0.47 for this MAC. Its address is load-bearing in a way the
+# other tenants' are not: blocky points every proxied name here, so a moved
+# proxy takes every name with it.
+lxc_cores: 1
+lxc_memory: 512
+lxc_disk: 8
+
+# It forwards requests. It reads nothing from the pool.
+lxc_mounts: []

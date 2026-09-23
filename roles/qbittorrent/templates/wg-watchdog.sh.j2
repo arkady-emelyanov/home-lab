@@ -1,0 +1,33 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Managed by Ansible (roles/qbittorrent). Edits here are overwritten.
+#
+# Stops qBittorrent when the tunnel has gone quiet, and starts it again when the
+# tunnel recovers.
+#
+# It deliberately does not restart WireGuard. reresolve-dns already handles the
+# case it can fix -- a rotated endpoint address -- and if that has not worked,
+# restarting the tunnel will not help either. What matters then is that the
+# torrent client is not running, so nothing leaves over the home address in the
+# window before anyone notices.
+set -eu
+
+IFACE="{{ qbittorrent_wg_interface }}"
+STALE_AFTER={{ qbittorrent_handshake_stale_after }}
+
+latest=$(wg show "$IFACE" latest-handshakes 2>/dev/null | awk '{print $2}' | sort -rn | head -1)
+[ -n "${latest:-}" ] || latest=0
+
+age=$(( $(date +%s) - latest ))
+
+if [ "$latest" -eq 0 ] || [ "$age" -gt "$STALE_AFTER" ]; then
+    if systemctl is-active --quiet qbittorrent; then
+        logger -t wg-watchdog "handshake ${age}s old on $IFACE; stopping qbittorrent"
+        systemctl stop qbittorrent
+    fi
+else
+    if ! systemctl is-active --quiet qbittorrent; then
+        logger -t wg-watchdog "handshake ${age}s old on $IFACE; starting qbittorrent"
+        systemctl start qbittorrent
+    fi
+fi

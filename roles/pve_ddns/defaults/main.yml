@@ -1,0 +1,34 @@
+---
+# Keeps the `home` record pointing at this site's current public address.
+#
+# It runs on the hypervisor rather than in a container of its own. A whole
+# tenant -- vmid, reserved address, sshd, its own updates -- to make one HTTPS
+# call every few minutes is disproportionate, and it would add a failure mode
+# where a stopped container silently lets the record go stale while WireGuard
+# and anything else keyed to the name quietly stop working. The hypervisor is
+# the one thing that is always up.
+#
+# It must not run inside the qbittorrent container: that tenant's egress is the
+# VPN, so it would publish the provider's address as this site's.
+
+pve_ddns_zone: "{{ public_domain }}"
+pve_ddns_record: "home.{{ public_domain }}"
+
+# DNS only, never proxied. Cloudflare's proxy carries HTTP and HTTPS on a fixed
+# set of ports; it does not carry WireGuard's UDP or Worms Armageddon's TCP
+# 17011. Proxied, both break, and the failure looks like a router problem rather
+# than a DNS setting. The records for the web site are the opposite case and are
+# proxied -- they are not managed here.
+pve_ddns_proxied: false
+
+# Short, because the whole point is that the address moves. A record cached for
+# an hour outlives the address it names.
+pve_ddns_ttl: 60
+
+# Scoped to Zone:DNS:Edit plus Zone:Read on this zone alone. Read from the
+# automation database; only the entry name appears here.
+pve_ddns_token_entry: cloudflare/token.txt
+pve_ddns_token_path: /etc/cloudflare-ddns/token
+
+pve_ddns_script_path: /usr/local/sbin/cloudflare-ddns
+pve_ddns_interval: 5min

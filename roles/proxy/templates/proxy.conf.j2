@@ -1,0 +1,53 @@
+# {{ ansible_managed }}
+
+# Classify the source of every request once, for the :80 vhosts to gate on.
+# geo takes the most specific match, so the gateway's /32 wins over the LAN /24:
+# a plain LAN host is allowed, the router is not, and everything else -- a public
+# client, or the WAN address a masqueraded forward would wear -- falls to the
+# default. A .home name has no legitimate caller outside the LAN.
+geo $home_client {
+    default             0;
+    {{ proxy_lan }}     1;
+    {{ proxy_gateway }} 0;
+}
+{% for site in proxy_sites %}
+
+server {
+    listen 80;
+    server_name {{ site.name }};
+
+    # Off-LAN, or the gateway: drop it, connection closed, before anything is
+    # served. See the geo block above.
+    if ($home_client = 0) { return 444; }
+
+    client_max_body_size {{ site.max_body }};
+
+    location / {
+        proxy_pass {{ site.upstream }};
+
+        # HTTP/1.1 with the upgrade headers, or every websocket here fails:
+        # Jellyfin's playback session, Immich's live timeline, qBittorrent's
+        # log view. The symptom is a UI that loads and then never updates.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering {{ 'on' if site.buffering else 'off' }};
+        proxy_read_timeout {{ site.read_timeout }};
+        proxy_send_timeout {{ site.read_timeout }};
+    }
+}
+{% endfor %}
+
+# A request arriving by address, or for a name not listed above, is refused
+# rather than served by whichever server block happens to be first.
+server {
+    listen 80 default_server;
+    server_name _;
+    return 404;
+}

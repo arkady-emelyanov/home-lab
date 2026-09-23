@@ -1,0 +1,16 @@
+---
+# The WireGuard server: the way back onto this LAN from outside.
+lxc_vmid: 115
+lxc_mac: "BC:24:11:00:00:73"
+
+lxc_hostname: wireguard
+
+# Reserve 192.168.0.45 for this MAC on the router, and forward UDP 51820 to it.
+# This is the one tenant that must be reachable from the internet, so unlike the
+# others its address is load-bearing: the router's forward names it.
+lxc_cores: 1
+lxc_memory: 512
+lxc_disk: 8
+
+# Nothing from the pool. This container routes; it does not read files.
+lxc_mounts: []

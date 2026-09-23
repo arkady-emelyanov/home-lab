@@ -1,0 +1,12 @@
+---
+# Kernel modules the hypervisor must provide for its tenants.
+#
+# A container cannot load a module: modules are global to the kernel and
+# unprivileged containers have no business touching it. So anything a tenant
+# needs has to be loaded here, and persisted, or the tenant breaks silently on
+# the next reboot.
+pve_kernel_modules:
+  # WireGuard runs inside the qbittorrent tenant. The interface is created in
+  # the container's own network namespace, which an unprivileged container is
+  # allowed to do -- but only if the module is already loaded on the host.
+  - wireguard

@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Daily offsite backup to Backblaze B2
+
+[Timer]
+OnCalendar={{ pve_backup_on_calendar }}
+RandomizedDelaySec={{ pve_backup_randomized_delay }}
+# Run after a missed window rather than skipping to the next day. A NAS that
+# was off overnight should still back up when it comes back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

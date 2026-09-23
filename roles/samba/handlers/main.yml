@@ -1,0 +1,16 @@
+---
+- name: Restart smbd
+  ansible.builtin.systemd_service:
+    name: smbd
+    state: restarted
+    daemon_reload: true
+
+- name: Restart avahi-daemon
+  ansible.builtin.systemd_service:
+    name: avahi-daemon
+    state: restarted
+
+- name: Restart wsdd2
+  ansible.builtin.systemd_service:
+    name: wsdd2
+    state: restarted

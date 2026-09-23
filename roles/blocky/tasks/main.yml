@@ -1,0 +1,93 @@
+---
+# Blocky ships as a single static Go binary rather than a Debian package, so it
+# is installed from its release tarball at a pinned version, verified against
+# the published checksum.
+#
+# Each version unpacks into its own directory and a symlink points at the
+# current one. That makes a version bump a changed symlink -- which notifies the
+# restart -- rather than needing a task that inspects whether an earlier task
+# changed something.
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ blocky_user }}"
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+
+- name: Create the install and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ blocky_install_dir }}"
+    - "{{ blocky_install_dir }}/{{ blocky_version }}"
+    - "{{ blocky_config_dir }}"
+
+- name: Download the release
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/0xERR0R/blocky/releases/download/v{{ blocky_version }}/blocky_v{{ blocky_version }}_Linux_{{ blocky_arch }}.tar.gz
+    dest: "/tmp/blocky-{{ blocky_version }}.tar.gz"
+    checksum: "sha256:{{ blocky_sha256 }}"
+    mode: "0644"
+
+- name: Unpack it
+  ansible.builtin.unarchive:
+    src: "/tmp/blocky-{{ blocky_version }}.tar.gz"
+    dest: "{{ blocky_install_dir }}/{{ blocky_version }}"
+    remote_src: true
+    include: [blocky]
+    owner: root
+    group: root
+    mode: "0755"
+    creates: "{{ blocky_install_dir }}/{{ blocky_version }}/blocky"
+
+- name: Point the current symlink at this version
+  ansible.builtin.file:
+    src: "{{ blocky_install_dir }}/{{ blocky_version }}/blocky"
+    dest: "{{ blocky_install_dir }}/blocky"
+    state: link
+  notify: Restart blocky
+
+- name: Configure blocky
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ blocky_config_dir }}/config.yml"
+    owner: root
+    group: "{{ blocky_user }}"
+    mode: "0640"
+    # A config blocky cannot parse takes DNS down for the whole LAN on restart.
+    # Better to fail here, with the running resolver untouched.
+    validate: "{{ blocky_install_dir }}/blocky validate --config %s"
+  notify: Restart blocky
+
+- name: Install the service unit
+  ansible.builtin.template:
+    src: blocky.service.j2
+    dest: /etc/systemd/system/blocky.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart blocky
+
+- name: Stop the stub resolver holding port 53
+  # Debian's systemd-resolved listens on 127.0.0.53:53 and, on some images, on
+  # the interface too. Blocky cannot bind 53 while it does.
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: stopped
+    enabled: false
+    masked: true
+  failed_when: false
+
+- name: Enable and start blocky
+  ansible.builtin.systemd_service:
+    name: blocky
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Re-resolve the WireGuard endpoint periodically
+
+[Timer]
+OnBootSec={{ qbittorrent_reresolve_interval }}
+OnUnitActiveSec={{ qbittorrent_reresolve_interval }}
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

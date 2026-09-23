@@ -1,0 +1,205 @@
+---
+- name: Gather facts about the container
+  # The tenant plays run with gather_facts disabled -- the container may not
+  # exist when the play starts. Docker's apt source needs the codename.
+  ansible.builtin.setup:
+    gather_subset:
+      - min
+
+- name: Install what the Docker repository needs
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch Docker's signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Docker repository
+  # Debian 13 ships docker.io but no compose v2, and Immich is distributed only
+  # as a compose project. Upstream's repository is where the plugin lives.
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/debian
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: amd64
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: Install Docker
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Create the project directory
+  ansible.builtin.file:
+    path: "{{ immich_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Read the database password
+  ansible.builtin.set_fact:
+    immich_db_password: "{{ lookup('keepass', immich_db_password_entry) }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: Write the environment
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ immich_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart immich
+
+- name: Write the compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ immich_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart immich
+
+- name: Install the unit that runs the project
+  # `docker compose up -d` out of a converge leaves nothing behind that will
+  # ever run it again. `restart: always` is a property of a container that
+  # exists, not a way to bring one into being: a `docker compose down` removes
+  # the containers, and from then on every boot starts docker with nothing to
+  # restore. That is how Immich stayed down for twelve hours after its library
+  # was migrated onto its own dataset -- the project was taken down for the
+  # move, and only the next converge noticed.
+  ansible.builtin.template:
+    src: immich.service.j2
+    dest: /etc/systemd/system/immich.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart immich
+
+- name: Start Immich
+  ansible.builtin.systemd_service:
+    name: immich
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# --- The tunnel -------------------------------------------------------------
+
+- name: Install cloudflared
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/cloudflare/cloudflared/releases/download/{{ immich_cloudflared_version }}/cloudflared-linux-amd64
+    dest: /usr/local/bin/cloudflared
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart cloudflared
+
+- name: Create the cloudflared account
+  ansible.builtin.user:
+    name: cloudflared
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create the cloudflared configuration directory
+  ansible.builtin.file:
+    path: /etc/cloudflared
+    state: directory
+    owner: root
+    group: cloudflared
+    mode: "0750"
+
+- name: Install the tunnel credentials
+  ansible.builtin.copy:
+    content: "{{ lookup('keepass', immich_tunnel_credentials_entry) }}"
+    dest: /etc/cloudflared/credentials.json
+    owner: root
+    group: cloudflared
+    mode: "0640"
+  no_log: true
+  notify: Restart cloudflared
+
+- name: Configure the tunnel
+  ansible.builtin.template:
+    src: cloudflared-config.yml.j2
+    dest: /etc/cloudflared/config.yml
+    owner: root
+    group: cloudflared
+    mode: "0640"
+  notify: Restart cloudflared
+
+- name: Install the tunnel unit
+  ansible.builtin.template:
+    src: cloudflared.service.j2
+    dest: /etc/systemd/system/cloudflared.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart cloudflared
+
+- name: Start the tunnel
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Read the Cloudflare token
+  ansible.builtin.set_fact:
+    immich_cf_token: "{{ lookup('keepass', immich_cf_token_entry) }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: Find the zone
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones?name={{ immich_domain.split('.')[-2:] | join('.') }}"
+    headers:
+      Authorization: "Bearer {{ immich_cf_token }}"
+  delegate_to: localhost
+  register: immich_zone
+  no_log: true
+
+- name: Publish the tunnel CNAME for {{ immich_domain }}
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ immich_zone.json.result[0].id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ immich_cf_token }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ immich_domain }}"
+      content: "{{ immich_tunnel_id }}.cfargotunnel.com"
+      proxied: true
+      ttl: 1
+    status_code: [200, 400]
+  delegate_to: localhost
+  register: immich_dns
+  changed_when: immich_dns.status == 200
+  failed_when: >-
+    immich_dns.status == 400
+    and 'already exists' not in (immich_dns.json.errors | map(attribute='message') | join(' '))
+  no_log: true

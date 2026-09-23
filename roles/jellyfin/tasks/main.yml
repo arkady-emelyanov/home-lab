@@ -1,0 +1,129 @@
+---
+- name: Gather facts about the container
+  # The play runs with gather_facts disabled: the container may not exist when
+  # the play starts, and the lxc role is what creates it and finds its address.
+  # By the time this role runs it is up and reachable, and the apt source below
+  # needs the distribution codename. min is enough and costs one round trip.
+  ansible.builtin.setup:
+    gather_subset:
+      - min
+
+- name: Install role prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      # The xml module edits encoding.xml element by element and needs lxml on
+      # the target to do it.
+      - python3-lxml
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch the Jellyfin repository key
+  ansible.builtin.get_url:
+    url: "{{ jellyfin_repo_key_url }}"
+    dest: /tmp/jellyfin.key
+    mode: "0644"
+
+- name: Convert the key to its own keyring
+  # Dearmoured into a dedicated keyring referenced by Signed-By, so it can only
+  # ever validate the Jellyfin repository -- not every other apt source on the
+  # system, which is what trusted.gpg.d would mean.
+  ansible.builtin.command:
+    cmd: "gpg --dearmor --batch --yes -o {{ jellyfin_repo_keyring }} /tmp/jellyfin.key"
+  args:
+    creates: "{{ jellyfin_repo_keyring }}"
+
+- name: Add the Jellyfin repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/jellyfin.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: {{ jellyfin_repo_url }}
+      Suites: {{ ansible_distribution_release }}
+      Components: main
+      Signed-By: {{ jellyfin_repo_keyring }}
+
+- name: Enable non-free for the Intel media driver
+  # The iHD driver QuickSync needs on Gen8+ Intel graphics lives in non-free.
+  # Debian enables non-free-firmware but not non-free.
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list.d/debian.sources
+    regexp: '^(Components:(?:(?!\bnon-free\b).)*)$'
+    replace: '\1 non-free'
+  when: jellyfin_hwaccel
+
+- name: Install the Intel VA-API driver
+  ansible.builtin.apt:
+    name:
+      - intel-media-va-driver-non-free
+      - vainfo
+    state: present
+    # apt refreshes before installing, so the repository and component changes
+    # above take effect here without a separate cache-update task.
+    update_cache: true
+  when: jellyfin_hwaccel
+
+- name: Install Jellyfin
+  ansible.builtin.apt:
+    name: "jellyfin={{ jellyfin_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+  notify: Restart jellyfin
+
+- name: Hold the Jellyfin packages at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [jellyfin, jellyfin-server, jellyfin-web]
+
+- name: Put the service in the render and share groups
+  # render: opens the passed-through GPU node. share: write access to the
+  # libraries that allow deletion.
+  ansible.builtin.user:
+    name: jellyfin
+    groups: "{{ [jellyfin_render_gid, share_gid] | map('string') | list }}"
+    append: true
+  notify: Restart jellyfin
+
+- name: Clear any failed start left by the package
+  # Installing the package starts Jellyfin immediately -- before this role has
+  # added it to the share group -- so it fails on /var/lib/jellyfin, and five
+  # rapid failures latch systemd's start rate limiter. The limiter outlives the
+  # fix: without clearing it, the start below is refused with "Start request
+  # repeated too quickly" even though the permissions are correct by then.
+  ansible.builtin.command:
+    cmd: systemctl reset-failed jellyfin
+  changed_when: false
+
+- name: Enable and start Jellyfin
+  ansible.builtin.systemd_service:
+    name: jellyfin
+    state: started
+    enabled: true
+
+- name: Configure hardware transcoding
+  community.general.xml:
+    path: /etc/jellyfin/encoding.xml
+    xpath: "/EncodingOptions/{{ item.key }}"
+    value: "{{ item.value }}"
+  loop: "{{ jellyfin_encoding_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  when: jellyfin_hwaccel
+  notify: Restart jellyfin
+
+- name: Set the codecs decoded on the GPU
+  # set_children replaces the whole list, so this is one task with the complete
+  # set rather than a loop that would leave only the last codec.
+  community.general.xml:
+    path: /etc/jellyfin/encoding.xml
+    xpath: /EncodingOptions/HardwareDecodingCodecs
+    set_children: "{{ jellyfin_hardware_decoding_codecs }}"
+  when: jellyfin_hwaccel
+  notify: Restart jellyfin

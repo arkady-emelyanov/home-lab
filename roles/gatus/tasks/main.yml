@@ -1,0 +1,97 @@
+---
+- name: Gather facts about the container
+  ansible.builtin.setup:
+    gather_subset:
+      - min
+
+- name: Install what the Docker repository needs
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch Docker's signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Docker repository
+  # Gatus ships only as a container image: no release binaries, and not in
+  # Debian. Debian has docker.io but no compose v2, so this uses upstream's
+  # repository, the same as immich.
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/debian
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: amd64
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: Install Docker
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Create the project directory
+  ansible.builtin.file:
+    path: "{{ gatus_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the checks
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ gatus_dir }}/config.yaml"
+    owner: root
+    group: root
+    # 0640: it carries the mail credential now.
+    mode: "0640"
+  no_log: true
+  notify: Restart gatus
+
+- name: Write the compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ gatus_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart gatus
+
+- name: Install the unit that runs the project
+  # Same reason as immich: a converge that runs `docker compose up -d` leaves
+  # nothing that will run it again, and `restart: always` only restarts a
+  # container that still exists. The thing watching for everything else being
+  # down should not be the thing that quietly stays down itself.
+  ansible.builtin.template:
+    src: gatus.service.j2
+    dest: /etc/systemd/system/gatus.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart gatus
+
+- name: Start Gatus
+  ansible.builtin.systemd_service:
+    name: gatus
+    state: started
+    enabled: true
+    daemon_reload: true

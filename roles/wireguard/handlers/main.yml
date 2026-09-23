@@ -1,0 +1,7 @@
+---
+- name: Restart wireguard
+  # wg-quick tears the interface down and brings it back, which drops every
+  # connected client for a moment. Adding a peer is the usual reason this runs.
+  ansible.builtin.systemd_service:
+    name: wg-quick@wg0
+    state: restarted

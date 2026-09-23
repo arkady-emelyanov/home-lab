@@ -1,0 +1,117 @@
+---
+- name: Install Samba
+  ansible.builtin.apt:
+    name: samba
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Confirm every share path is mounted
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ samba_shares }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: samba_share_paths
+
+- name: Fail with the full list of missing share paths
+  ansible.builtin.assert:
+    that:
+      - samba_share_paths.results | rejectattr('stat.isdir', 'defined') | list | length == 0
+    fail_msg: >-
+      Not a directory: {{ samba_share_paths.results | rejectattr('stat.isdir', 'defined')
+        | map(attribute='item.path') | join(', ') }}.
+      These are bind mounts from the host. Exporting a path that is not the
+      mount would serve an empty directory from the container's own root disk,
+      and writes to it would silently never reach the pool.
+
+- name: Configure Samba
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: "0644"
+    # Never install a config smbd will not parse; a broken one takes the service
+    # down on restart rather than at apply time.
+    validate: testparm -s %s
+  notify: Restart smbd
+
+- name: Create the smbd unit drop-in directory
+  # copy does not create parent directories, and a fresh container has no
+  # drop-in directory for a unit it has never overridden.
+  ansible.builtin.file:
+    path: /etc/systemd/system/smbd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Order smbd after the network is up
+  # smb.conf sets `bind interfaces only`, so smbd resolves its interface list
+  # once, at startup. Without this it wins the race against ifupdown on boot,
+  # binds loopback alone, and refuses every connection from the network while
+  # reporting itself active and "ready to serve connections".
+  #
+  # network-online.target is not enough: with ifupdown and no wait-online
+  # service it is satisfied immediately. networking.service is a oneshot that
+  # completes only after `ifup -a` returns.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/smbd.service.d/after-network.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      After=networking.service
+  notify: Restart smbd
+
+- name: Enable and start smbd
+  ansible.builtin.systemd_service:
+    name: smbd
+    state: started
+    enabled: true
+
+- name: Mask nmbd
+  # NetBIOS name service. `disable netbios` stops smbd using it; masking nmbd
+  # stops the separate daemon that would still announce on 137/138.
+  ansible.builtin.systemd_service:
+    name: nmbd
+    state: stopped
+    enabled: false
+    masked: true
+
+- name: Install the discovery daemons
+  ansible.builtin.apt:
+    name:
+      - avahi-daemon
+      - avahi-utils
+      - wsdd2
+    state: present
+  when: samba_advertise
+
+- name: Advertise the SMB service
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: avahi-daemon.conf.j2, dest: /etc/avahi/avahi-daemon.conf}
+    - {src: avahi-smb.service.j2, dest: /etc/avahi/services/smb.service}
+    - {src: wsdd2.default.j2, dest: /etc/default/wsdd2}
+  loop_control:
+    label: "{{ item.dest }}"
+  when: samba_advertise
+  notify:
+    - Restart avahi-daemon
+    - Restart wsdd2
+
+- name: Enable and start the discovery daemons
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [avahi-daemon, wsdd2]
+  when: samba_advertise

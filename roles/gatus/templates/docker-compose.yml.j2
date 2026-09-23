@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+name: gatus
+
+services:
+  gatus:
+    container_name: gatus
+    image: {{ gatus_image }}
+    volumes:
+      - {{ gatus_dir }}/config.yaml:/config/config.yaml:ro
+      - data:/data
+    ports:
+      - '{{ gatus_port }}:8080'
+    restart: always
+
+volumes:
+  data:

@@ -1,0 +1,19 @@
+# Direct dependencies of the control machine. Versions are ranges here and are
+# resolved to exact pins with hashes in requirements.txt -- edit this file, then
+# regenerate: pip-compile --generate-hashes --strip-extras requirements.in
+#
+# ansible-core, not the `ansible` bundle: the bundle vendors several hundred
+# collections that are never used here, which is a large amount of code running
+# with root on the host for no reason. The two collections that are needed are
+# declared in requirements.yml and pinned there.
+ansible-core~=2.19.0
+
+# Catches deprecated module names and syntax before a run does.
+ansible-lint~=25.0
+
+# Direct dependencies of scripts/wg-client, which generates WireGuard keys and
+# reads the role's defaults. Both arrive anyway as dependencies of ansible-core,
+# but the script imports them itself, so they are named here: a transitive
+# dependency that stops being one takes the script with it silently.
+cryptography
+pyyaml

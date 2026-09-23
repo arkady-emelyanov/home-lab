@@ -1,0 +1,136 @@
+---
+# One play per tenant. Each creates its container if absent, brings it up, finds
+# the address DHCP gave it, and configures what runs inside.
+#
+#   make tenants
+#   make tenants TENANT=nas
+#
+# gather_facts is deferred: the container may not exist yet when the play
+# starts, and the lxc role is what makes it reachable.
+#
+# A tenant with tenant_enabled false is not installed: the play ends before any
+# role runs. pre_tasks are the only place this check works, because roles would
+# otherwise have already created the container.
+#
+# `| bool` is not decoration: a non-empty string is truthy in Jinja, so the
+# string "false" -- what you get from `-e tenant_enabled=false`, or from
+# quoting it in YAML -- would otherwise read as on.
+- name: Samba fileserver, known on the network as nas
+  hosts: samba
+  gather_facts: false
+  pre_tasks:
+    - name: Skip samba when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: samba
+
+- name: Jellyfin
+  hosts: jellyfin
+  gather_facts: false
+  pre_tasks:
+    - name: Skip jellyfin when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: jellyfin
+
+- name: Blocky DNS
+  hosts: blocky
+  gather_facts: false
+  pre_tasks:
+    - name: Skip blocky when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: blocky
+
+- name: QBittorrent behind WireGuard
+  hosts: qbittorrent
+  gather_facts: false
+  pre_tasks:
+    - name: Skip qbittorrent when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: qbittorrent
+
+- name: Public web site behind a Cloudflare tunnel
+  hosts: site
+  gather_facts: false
+  pre_tasks:
+    - name: Skip site when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: site
+
+- name: WireGuard server, the way back onto the LAN from outside
+  hosts: wireguard
+  gather_facts: false
+  pre_tasks:
+    - name: Skip wireguard when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: wireguard
+
+- name: Immich photo library
+  hosts: immich
+  gather_facts: false
+  pre_tasks:
+    - name: Skip immich when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: immich
+
+- name: The LAN reverse proxy
+  hosts: proxy
+  gather_facts: false
+  pre_tasks:
+    - name: Skip proxy when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: proxy
+
+- name: Miniflux feed reader
+  hosts: miniflux
+  gather_facts: false
+  pre_tasks:
+    - name: Skip miniflux when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: miniflux
+
+- name: Gatus health dashboard
+  hosts: gatus
+  gather_facts: false
+  pre_tasks:
+    - name: Skip gatus when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: gatus

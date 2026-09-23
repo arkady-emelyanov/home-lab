@@ -1,0 +1,40 @@
+---
+# A WireGuard server, so a phone or a laptop outside the house can reach this
+# LAN. Distinct from the qbittorrent role, which is a WireGuard *client* dialing
+# out to a commercial provider -- opposite direction, opposite purpose.
+#
+# Keys are never generated here. scripts/wg-client makes them, once, and writes
+# them outside the repository. A role that generated keys would make new ones on
+# some later run and silently lock out every client that already exists.
+
+wireguard_port: 51820
+wireguard_subnet: 10.10.0.0/24
+# Carries its own prefix, so the template needs no address arithmetic and this
+# role needs no collection to do it with.
+wireguard_server_address: 10.10.0.1/24
+
+# The name clients dial. It is a DNS-only record updated by pve_ddns every five
+# minutes, which is what makes a dynamic address usable as an endpoint.
+wireguard_endpoint: "home.{{ public_domain }}"
+
+# What clients are told to route through the tunnel. The LAN plus the tunnel's
+# own subnet is a split tunnel: everything else leaves the client normally,
+# which keeps a phone's battery and latency out of it.
+#
+# Replace with "0.0.0.0/0, ::/0" for a full tunnel -- all traffic home, and
+# Blocky's filtering applied on mobile data as a side effect.
+wireguard_client_routes: "192.168.0.0/24, 10.10.0.0/24"
+
+# Clients resolve through Blocky, so jellyfin.home and nas.home work from
+# outside exactly as they do at home.
+wireguard_client_dns: 192.168.0.40
+
+# The LAN this masquerades onto. Masquerade rather than routing, so VPN clients
+# arrive at Jellyfin and Samba wearing this container's address: nothing on the
+# LAN and nothing in the router needs to be taught where 10.10.0.0/24 lives.
+wireguard_lan_interface: eth0
+
+# Entries in the KeePassXC database, written by scripts/wg-client. Only their
+# names appear here.
+wireguard_server_key_entry: wireguard-server/server.key
+wireguard_clients_group: wireguard-server/clients

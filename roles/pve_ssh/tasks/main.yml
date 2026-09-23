@@ -1,0 +1,113 @@
+---
+# Makes the management key the only way into the hypervisor, and leaves a copy
+# of its public half where `pct create` can read it when building tenants.
+
+- name: Install the locale definitions
+  # Debian's sshd accepts LANG and LC_* from the client, and a workstation
+  # sending en_US.UTF-8 to a host that never generated it makes every shell,
+  # and every perl script a package runs, open with a locale warning. The noise
+  # is harmless but it lands in front of command output -- including, once, in
+  # front of an Ansible module's JSON, which then failed to parse.
+  ansible.builtin.apt:
+    name: locales
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Generate the locale the client asks for
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: Empty the static message of the day
+  # sshd already has PrintMotd no -- on Debian it is pam_motd in
+  # /etc/pam.d/sshd that prints this, so turning it off in sshd_config does
+  # nothing. Emptying the file is what actually silences it.
+  ansible.builtin.copy:
+    content: ""
+    dest: /etc/motd
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Find the dynamic motd scripts
+  ansible.builtin.find:
+    paths: /etc/update-motd.d
+    file_type: file
+  register: pve_ssh_motd_scripts
+
+- name: Stop the dynamic motd scripts running
+  # Left in place, just not executable: run-parts skips them, and an upgrade
+  # that adds a new one is visible as a change here rather than silently
+  # reinstating the banner.
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "0644"
+  loop: "{{ pve_ssh_motd_scripts.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Make the hypervisor's prompt red
+  # Every tenant here looks the same at a shell, and most of them are cheap to
+  # rebuild. This one is not: it holds the pool, and a mistyped command in the
+  # wrong window destroys datasets or stops every container at once. The colour
+  # is there to answer "which box am I on" before the command runs, not after.
+  #
+  # /root/.profile sources .bashrc on Debian, so this reaches an ssh login shell
+  # as well as an interactive one.
+  ansible.builtin.blockinfile:
+    path: /root/.bashrc
+    marker: "# {mark} prompt (ansible)"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    block: |
+      PS1='\[\e[1;31m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+
+- name: Authorise the management key for root
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('ansible.builtin.file', ssh_public_key_file) }}"
+    state: present
+    # NOT exclusive. On a Proxmox node /root/.ssh/authorized_keys is a symlink
+    # into the cluster filesystem (/etc/pve/priv/authorized_keys) and holds the
+    # node's own key, which PVE uses for migration, cluster operations and the
+    # web UI shell. Removing keys not listed here would delete that and break
+    # them.
+    #
+    # The cost is that revocation is not declarative: deleting this key from
+    # group_vars does not remove it from the host, so an unwanted key has to be
+    # taken out by hand.
+
+- name: Keep a copy of the public key for pct to hand to new containers
+  # `pct create --ssh-public-keys` reads a file on the hypervisor, not on the
+  # control machine, so the key has to exist here before any tenant is built.
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', ssh_public_key_file) }}\n"
+    dest: "{{ pve_public_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Detect whether sshd is socket-activated
+  # Debian enables ssh.socket on some installs, so systemd holds port 22 and
+  # sshd inherits the descriptor. A SIGHUP -- what `reload` sends -- makes sshd
+  # re-exec and try to bind the port itself, which fails with "Cannot bind any
+  # address" and takes the service down.
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+  register: pve_ssh_socket
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Apply the sshd policy
+  ansible.builtin.template:
+    src: hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload sshd

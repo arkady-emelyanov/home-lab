@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Keep {{ pve_ddns_record }} current
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ pve_ddns_interval }}
+# The address can change while the machine is off, so the first run after boot
+# matters more than keeping to a schedule.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

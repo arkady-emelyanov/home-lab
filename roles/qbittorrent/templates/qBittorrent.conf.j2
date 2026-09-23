@@ -1,0 +1,31 @@
+[BitTorrent]
+Session\DefaultSavePath={{ qbittorrent_save_path }}
+Session\TempPathEnabled=true
+Session\TempPath={{ qbittorrent_incomplete_path }}
+Session\Interface={{ qbittorrent_wg_interface }}
+Session\InterfaceName={{ qbittorrent_wg_interface }}
+Session\Preallocation={{ 'true' if qbittorrent_preallocate else 'false' }}
+Session\DHTEnabled={{ 'true' if qbittorrent_dht else 'false' }}
+Session\PeXEnabled={{ 'true' if qbittorrent_pex else 'false' }}
+Session\LSDEnabled={{ 'true' if qbittorrent_lsd else 'false' }}
+Session\Port={{ qbittorrent_incoming_port }}
+Session\GlobalMaxRatio={{ qbittorrent_max_ratio }}
+Session\GlobalMaxSeedingMinutes={{ qbittorrent_max_seeding_minutes }}
+Session\ShareLimitAction={{ qbittorrent_share_limit_action }}
+
+[Meta]
+MigrationVersion={{ qbittorrent_config_migration_version }}
+
+[Network]
+PortForwardingEnabled={{ 'true' if qbittorrent_port_forwarding else 'false' }}
+
+[Preferences]
+WebUI\Port={{ qbittorrent_webui_port }}
+WebUI\Address=*
+WebUI\LocalHostAuth=false
+WebUI\Password_PBKDF2="{{ qbittorrent_password_hash.stdout }}"
+{% if qbittorrent_webui_auth_bypass_lan %}
+WebUI\AuthSubnetWhitelistEnabled=true
+WebUI\AuthSubnetWhitelist={{ qbittorrent_lan }}
+{% endif %}
+Downloads\SavePath={{ qbittorrent_save_path }}

@@ -1,0 +1,119 @@
+---
+# Every dataset on the pool, written out one by one.
+#
+# The content is overwhelmingly JPEG, MP4 and MP3 -- already compressed, so
+# compression buys almost nothing here. It is enabled anyway because lz4 aborts
+# early on data that does not compress, so it is close to free and catches
+# whatever is added later that does.
+#
+# recordsize is a MAXIMUM, not a fixed block size: a 4K file in a 1M dataset
+# occupies one small block. Its only real cost is read-modify-write on partial
+# rewrites of large files, which a file share never does. So 1M for media, and a
+# smaller record only where many small files are rewritten in place.
+pve_storage_datasets:
+  - name: tank/documents
+    mountpoint: /mnt/tank/share/documents
+    recordsize: 128K
+    compression: zstd
+    # Snapshotted: anonymously writable over SMB, and irreplaceable. The recycle
+    # bin only catches deletions made through Samba -- not an rm from a shell,
+    # not a bad rsync, not a client that truncates a file in place.
+    com.sun:auto-snapshot: "true"
+
+  - name: tank/drone
+    mountpoint: /mnt/tank/share/drone
+    recordsize: 1M
+    compression: lz4
+
+  # Immich's library: originals, thumbnails and transcodes. Not under
+  # tank/apps, which is tuned 128K for application state rewritten in place --
+  # this is media, and belongs at 1M like the other media datasets.
+  #
+  # Snapshotted, and deliberately not in pve_backup_datasets. Two reasons, and
+  # the second is the one that matters: it is far larger than the offsite
+  # backup was sized for, and the library is itself a copy -- these photos are
+  # in iCloud, which is where they come from. The originals that are NOT in
+  # iCloud live in tank/photos, and that dataset does go offsite. So the
+  # snapshots here guard against deletion and corruption on this pool, and
+  # Apple holds the copy that survives the house burning down.
+  - name: tank/immich
+    mountpoint: /mnt/tank/immich
+    recordsize: 1M
+    compression: lz4
+    com.sun:auto-snapshot: "true"
+
+  - name: tank/photos
+    mountpoint: /mnt/tank/share/photos
+    recordsize: 1M
+    compression: lz4
+    com.sun:auto-snapshot: "true"
+
+  - name: tank/movies
+    mountpoint: /mnt/tank/share/movies
+    recordsize: 1M
+    compression: lz4
+
+  - name: tank/shows
+    mountpoint: /mnt/tank/share/shows
+    recordsize: 1M
+    compression: lz4
+
+  # Application state, one dataset per app beneath it. Small files rewritten in
+  # place by SQLite, so a small record and no media tuning.
+  - name: tank/apps
+    mountpoint: /mnt/tank/apps
+    recordsize: 128K
+    compression: lz4
+
+  - name: tank/apps/jellyfin
+    mountpoint: /mnt/tank/apps/jellyfin
+    recordsize: 64K
+    compression: lz4
+
+  # Where vzdump writes the container dumps. On the pool rather than the
+  # system disk because that is the only place with room, and because a
+  # hypervisor that loses local-lvm loses every container rootfs at once --
+  # which is precisely the failure the dumps exist for.
+  #
+  # 1M because a dump is one long sequential write, and lz4 because vzdump has
+  # already zstd-compressed the stream: lz4 gives up early on data that does
+  # not compress, so it costs nothing and catches the day the compression
+  # setting changes.
+  #
+  # Not snapshotted. A snapshot of a backup directory pins every dump ever
+  # pruned, so the space freed by retention would never actually come back.
+  - name: tank/backup
+    mountpoint: /mnt/tank/backup
+    recordsize: 1M
+    compression: lz4
+
+# Applied to every dataset unless it says otherwise. Both are already set on the
+# pool root and would be inherited; stating them means a dataset created on a
+# differently-tuned pool still gets them.
+pve_storage_common:
+  atime: "off"
+  # Extended attributes in the inode rather than a hidden directory: one IO
+  # instead of two. Samba stores DOS attributes as xattrs, so this is on the
+  # hot path for every file served.
+  xattr: sa
+
+# The share tree is owned by one id, mapped through unshifted into every tenant.
+# 0775/0664 so group members can write; read-only is
+# enforced at the mount, not by file modes, so a share changing from read-only
+# to read-write never means re-chmodding terabytes.
+pve_storage_dir_mode: "0775"
+pve_storage_file_mode: "0664"
+
+# What leaves the house. Named here, beside the datasets themselves, so the list
+# cannot drift from what actually exists on the pool.
+#
+# documents and photos only. movies and shows are re-acquirable, and drone is
+# deliberately excluded -- the kept pair is small enough to store offsite for
+# pennies and restore over a home uplink, which the media is not. This is the
+# same pair that carries com.sun:auto-snapshot above, and for the same reason.
+pve_backup_datasets:
+  - dataset: tank/documents
+    mountpoint: /mnt/tank/share/documents
+
+  - dataset: tank/photos
+    mountpoint: /mnt/tank/share/photos

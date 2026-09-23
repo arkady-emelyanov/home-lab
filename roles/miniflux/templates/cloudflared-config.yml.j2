@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+tunnel: {{ miniflux_tunnel_id }}
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: {{ miniflux_domain }}
+    service: http://127.0.0.1:{{ miniflux_port }}
+  - service: http_status:404

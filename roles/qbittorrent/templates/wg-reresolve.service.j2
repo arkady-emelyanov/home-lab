@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Re-resolve the WireGuard endpoint if handshakes have stalled
+After=wg-quick@{{ qbittorrent_wg_interface }}.service
+Requires=wg-quick@{{ qbittorrent_wg_interface }}.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/reresolve-dns.sh {{ qbittorrent_wg_interface }}

@@ -1,0 +1,27 @@
+---
+# The nas container. Declared here rather than in the role because this is
+# per-host data and the vmid already lives in inventory; roles/lxc consumes it
+# and holds none of it.
+lxc_vmid: 110
+
+# Fixed MAC, so a DHCP reservation survives the container being rebuilt.
+# Proxmox generates a random one at creation, which means every `pct destroy`
+# and recreate would hand the container a new address and silently break the
+# reservation. BC:24:11 is Proxmox's own OUI; the last octet is the vmid in hex
+# (110 = 0x6E) so the mapping is readable at a glance.
+lxc_mac: "BC:24:11:00:00:6E"
+# The container is called `nas` on the network -- it is what Samba reports, what
+# mDNS publishes as nas.local, and what WS-Discovery shows under Network. The
+# tenant is called `samba` in this repository because that is what it runs; the
+# two names are deliberately different.
+lxc_hostname: nas
+lxc_cores: 2
+lxc_memory: 1024
+lxc_disk: 8
+
+lxc_mounts:
+  - {host: /mnt/tank/share/documents, path: /srv/documents, ro: false}
+  - {host: /mnt/tank/share/drone, path: /srv/drone, ro: false}
+  - {host: /mnt/tank/share/photos, path: /srv/photos, ro: false}
+  - {host: /mnt/tank/share/movies, path: /srv/movies, ro: true}
+  - {host: /mnt/tank/share/shows, path: /srv/shows, ro: true}

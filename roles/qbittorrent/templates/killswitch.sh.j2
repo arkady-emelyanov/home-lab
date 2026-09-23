@@ -1,0 +1,61 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Managed by Ansible (roles/qbittorrent). Edits here are overwritten.
+#
+# Everything outbound goes through {{ qbittorrent_wg_interface }} or does not
+# go. The two exceptions are the LAN, so the WebUI stays reachable and Ansible
+# can still connect, and the WireGuard handshake itself.
+#
+# The handshake is permitted to any address rather than to the endpoint's,
+# because the provider rotates that address on a 5-second TTL. Pinning it here
+# would break the tunnel exactly when reresolve-dns is trying to fix it.
+set -e
+
+iptables -F OUTPUT
+iptables -F INPUT
+
+# Established traffic first, or applying these rules drops the session doing it.
+iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+iptables -A INPUT  -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# The tunnel.
+iptables -A OUTPUT -o {{ qbittorrent_wg_interface }} -j ACCEPT
+iptables -A OUTPUT -p udp --dport {{ qbittorrent_wg_port }} -j ACCEPT
+
+# The LAN: WebUI in, SSH in, and replies out.
+iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport {{ qbittorrent_webui_port }} -j ACCEPT
+iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport {{ qbittorrent_health_port }} -j ACCEPT
+iptables -A OUTPUT -d {{ qbittorrent_lan }} -j ACCEPT
+
+# DHCP, or the container loses its lease and with it the LAN rules above.
+iptables -A OUTPUT -p udp --dport 67 -j ACCEPT
+iptables -A INPUT  -p udp --sport 67 -j ACCEPT
+
+iptables -P OUTPUT DROP
+iptables -P INPUT DROP
+
+# IPv6 is refused outright.
+#
+# The tunnel carries AllowedIPs = 0.0.0.0/0 -- IPv4 only -- so any IPv6 traffic
+# would leave outside it. Today the container has no IPv6 default route and only
+# a link-local and ULA address, so nothing can egress anyway; this is here for
+# the day the router starts advertising a global prefix, when the leak would
+# otherwise open silently.
+#
+# Rejected rather than dropped, so a client that resolves AAAA first fails
+# immediately and falls back to IPv4, instead of waiting for a timeout.
+ip6tables -F OUTPUT
+ip6tables -F INPUT
+
+ip6tables -A INPUT  -i lo -j ACCEPT
+ip6tables -A OUTPUT -o lo -j ACCEPT
+
+ip6tables -A OUTPUT -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A INPUT  -j REJECT --reject-with icmp6-adm-prohibited
+
+ip6tables -P OUTPUT DROP
+ip6tables -P INPUT DROP

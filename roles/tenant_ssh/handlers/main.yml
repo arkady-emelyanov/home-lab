@@ -1,0 +1,7 @@
+---
+# Restart rather than reload where systemd owns the socket: reload would kill
+# sshd there. ssh.service is KillMode=process, so existing sessions survive.
+- name: Reload tenant sshd
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: "{{ 'restarted' if (tenant_ssh_socket.status.ActiveState | default('')) == 'active' else 'reloaded' }}"

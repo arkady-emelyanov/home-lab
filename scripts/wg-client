@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Create and remove WireGuard clients for the wireguard tenant.
+
+Keys are written straight into the automation database -- never to disk. The
+role reads them back through the keepass lookup, so a client exists in exactly
+one place.
+
+    wg-client add <name>       create a client and its keys
+    wg-client show <name>      render an existing client's config again
+    wg-client list             list clients and their addresses
+    wg-client remove <name>    delete a client and its keys
+
+After add or remove, apply it:  make tenants TENANT=wireguard
+
+Keys are made here rather than by Ansible on purpose. Generating them during a
+converge would mean new keys on some later run, silently locking out every
+client that already exists -- and the one correct number of times to generate a
+keypair is once.
+
+The client config is rendered on demand from the parts rather than stored: it is
+derived data, and a stored copy is one more place the private key lives and one
+more thing to go stale when the endpoint changes.
+"""
+
+import argparse
+import base64
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+try:
+    import yaml
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+except ImportError as exc:  # pragma: no cover
+    sys.exit(
+        f"missing a python module: {exc}\n"
+        "Install this project's dependencies:\n"
+        "  pip install --require-hashes -r requirements.txt"
+    )
+
+import _keepass as kp
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+DEFAULTS = REPO / "roles" / "wireguard" / "defaults" / "main.yml"
+CLIENTS = "wireguard-server/clients"
+SERVER_KEY = "wireguard-server/server.key"
+SERVER_PUB = "wireguard-server/server.pub"
+
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+
+
+def _reexec_in_project_venv():
+    """Run under the interpreter requirements.txt actually describes.
+
+    The shebang is `env python3`, so without this the script runs against
+    whatever python happens to be first on PATH -- an interpreter this project
+    pins nothing for. The virtualenv is located the same way the Makefile
+    locates it, from .python-version, so there is no path hardcoded here.
+
+    Deliberately not the pyenv shim: the shim resolves a version from the
+    current directory and the environment, so a script run from elsewhere would
+    get the global python rather than this project's.
+    """
+    if os.environ.get("WG_CLIENT_REEXEC"):
+        return
+    version = REPO / ".python-version"
+    if not version.exists():
+        return
+    root = pathlib.Path(os.environ.get("PYENV_ROOT", pathlib.Path.home() / ".pyenv"))
+    interpreter = root / "versions" / version.read_text().strip() / "bin" / "python3"
+    if not interpreter.exists() or interpreter.samefile(sys.executable):
+        return
+    os.environ["WG_CLIENT_REEXEC"] = "1"
+    os.execv(str(interpreter), [str(interpreter), str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
+
+
+def settings():
+    """Read the role's defaults so the two cannot drift apart."""
+    raw = yaml.safe_load(DEFAULTS.read_text())
+    subnet = raw["wireguard_subnet"]
+    network, _, _prefix = subnet.partition("/")
+    return {
+        "port": raw["wireguard_port"],
+        "endpoint": raw["wireguard_endpoint"],
+        "routes": raw["wireguard_client_routes"],
+        "dns": raw["wireguard_client_dns"],
+        "server_address": raw["wireguard_server_address"].split("/")[0],
+        "octets": network.rsplit(".", 1)[0],
+    }
+
+
+def keypair():
+    private = X25519PrivateKey.generate()
+    raw_private = private.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    raw_public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw_private).decode(), base64.b64encode(raw_public).decode()
+
+
+def ensure_server():
+    """Create the server keypair the first time, and only then."""
+    if kp.get(SERVER_KEY):
+        return
+    private, public = keypair()
+    kp.put(SERVER_KEY, private, notes="WireGuard server private key")
+    kp.put(SERVER_PUB, public, notes="WireGuard server public key")
+    print("created the server keypair in the database")
+
+
+def names():
+    return sorted(
+        e[: -len(".pub")] for e in kp.entries(CLIENTS) if e.endswith(".pub")
+    )
+
+
+def next_address(cfg):
+    used = {kp.get(f"{CLIENTS}/{n}.ip") for n in names()} | {cfg["server_address"]}
+    for host in range(2, 255):
+        candidate = f"{cfg['octets']}.{host}"
+        if candidate not in used:
+            return candidate
+    sys.exit("no addresses left in the tunnel subnet")
+
+
+def client_config(name, cfg):
+    return f"""[Interface]
+PrivateKey = {kp.get(f'{CLIENTS}/{name}.key')}
+Address    = {kp.get(f'{CLIENTS}/{name}.ip')}/32
+DNS        = {cfg['dns']}
+
+[Peer]
+PublicKey    = {kp.get(SERVER_PUB)}
+PresharedKey = {kp.get(f'{CLIENTS}/{name}.psk')}
+Endpoint     = {cfg['endpoint']}:{cfg['port']}
+AllowedIPs   = {cfg['routes']}
+# Without this a NAT in front of the client forgets the mapping while idle and
+# nothing can reach it again until the client speaks first.
+PersistentKeepalive = 25
+"""
+
+
+def emit(name, cfg, show):
+    """Show the config as a QR code, and as text only when asked.
+
+    A private key echoed to a terminal ends up in scrollback, in a shell history
+    if it is piped, and in the log of anything recording the session -- so
+    making that the thing you opt into, rather than the thing that happens
+    anyway, is the point.
+    """
+    text = client_config(name, cfg)
+    if shutil.which("qrencode"):
+        subprocess.run(["qrencode", "-t", "ansiutf8"], input=text, text=True, check=False)
+        print(f"scan the code above to import {name}")
+    else:
+        print("install qrencode to get a scannable code here (apt install qrencode)")
+        print(f"or re-run with --show to print {name}'s config as text")
+    if show:
+        print()
+        print(text)
+
+
+def cmd_add(args, cfg):
+    if not NAME.match(args.name):
+        sys.exit("name must be lowercase letters, digits and dashes")
+    ensure_server()
+    if kp.get(f"{CLIENTS}/{args.name}.pub"):
+        sys.exit(f"{args.name} already exists -- `show` it, or `remove` it first")
+    private, public = keypair()
+    kp.put(f"{CLIENTS}/{args.name}.key", private, notes=f"{args.name} private key")
+    kp.put(f"{CLIENTS}/{args.name}.pub", public, notes=f"{args.name} public key")
+    kp.put(f"{CLIENTS}/{args.name}.psk", base64.b64encode(os.urandom(32)).decode(),
+           notes=f"{args.name} preshared key")
+    kp.put(f"{CLIENTS}/{args.name}.ip", next_address(cfg), notes=f"{args.name} tunnel address")
+    emit(args.name, cfg, args.show)
+    print("\nnow run:  make tenants TENANT=wireguard")
+
+
+def cmd_show(args, cfg):
+    if not kp.get(f"{CLIENTS}/{args.name}.pub"):
+        sys.exit(f"no client called {args.name}")
+    emit(args.name, cfg, args.show)
+
+
+def cmd_list(_args, _cfg):
+    found = names()
+    if not found:
+        print("no clients yet")
+        return
+    for name in found:
+        print(f"{name:20} {kp.get(f'{CLIENTS}/{name}.ip')}")
+
+
+def cmd_remove(args, _cfg):
+    if not kp.get(f"{CLIENTS}/{args.name}.pub"):
+        sys.exit(f"no client called {args.name}")
+    for suffix in ("key", "pub", "psk", "ip", "conf"):
+        kp.remove(f"{CLIENTS}/{args.name}.{suffix}")
+    print(f"removed {args.name}")
+    print("\nnow run:  make tenants TENANT=wireguard")
+
+
+COMMANDS = (
+    ("add", cmd_add, True, "create a client and its keys",
+     "Generates a keypair, a preshared key and the next free tunnel address, "
+     "and writes them into the database. Creates the server keypair too, the "
+     "first time it is run."),
+    ("show", cmd_show, True, "render an existing client's config again",
+     "Rebuilds the config for a client that already exists, from the parts held "
+     "in the database. Useful for a second device, or after losing the QR code."),
+    ("list", cmd_list, False, "list clients and their addresses",
+     "Every client in the database, with the tunnel address each was given."),
+    ("remove", cmd_remove, True, "delete a client and its keys",
+     "Deletes every entry belonging to the client. Its tunnel address becomes "
+     "free for the next one added. The peer is only really revoked once the "
+     "server is reconverged."),
+)
+
+EPILOG = """examples:
+  wg-client add phone          create a client called phone
+  wg-client add laptop --show  create one and print its config as text
+  wg-client list               see what exists
+  wg-client remove laptop      delete it
+
+Adding or removing a client changes only the database. The server does not know
+about it until:
+
+  make tenants TENANT=wireguard
+
+Secrets are shown as a QR code, not printed; --show prints the private key as
+text, which lives on in terminal scrollback, so ask for it only when you need to
+paste it.
+"""
+
+
+def main():
+    _reexec_in_project_venv()
+    parser = argparse.ArgumentParser(
+        prog="wg-client", description=__doc__, epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+    for name, handler, needs_name, blurb, detail in COMMANDS:
+        p = sub.add_parser(name, help=blurb, description=detail, epilog=EPILOG,
+                           formatter_class=argparse.RawDescriptionHelpFormatter)
+        if needs_name:
+            p.add_argument("name", help="the client's name: lowercase, digits, dashes")
+        if name in ("add", "show"):
+            p.add_argument("--show", action="store_true",
+                           help="also print the config as text, private key included")
+        p.set_defaults(handler=handler)
+    args = parser.parse_args()
+    if not getattr(args, "handler", None):
+        parser.print_help()
+        return
+    args.handler(args, settings())
+
+
+if __name__ == "__main__":
+    main()
