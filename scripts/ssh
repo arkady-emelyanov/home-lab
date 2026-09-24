@@ -1,0 +1,55 @@
+#!/bin/sh
+# SSH into a tenant as root.
+#
+#     ssh <tenant> [ssh arguments or a command]
+#     ssh                    list the tenants
+#
+#     ssh qbittorrent
+#     ssh nas systemctl status smbd
+#
+# A tenant is named as the inventory names it (samba) or by its hostname (nas).
+#
+# Tenants run on DHCP, so there is no fixed address to put in ~/.ssh/config.
+# The address is asked of the hypervisor on every call, the same way roles/lxc
+# finds it: eth0 by name, because a tenant with a tunnel has other interfaces
+# and the first address listed may not be the LAN one. The key and the
+# IdentitiesOnly are read from inventory/group_vars/tenants.yml, which is where
+# Ansible gets them, so the two cannot drift apart.
+set -eu
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+VARS="$ROOT/inventory/host_vars"
+
+value() {  # value <file> <key>: a scalar from a flat YAML file
+    sed -n "s/^$2:[[:space:]]*//p" "$1" | tr -d '"'
+}
+
+if [ $# -eq 0 ]; then
+    for f in "$VARS"/*.yml; do
+        vmid=$(value "$f" lxc_vmid)
+        [ -n "$vmid" ] || continue
+        printf '%-12s %-12s %s\n' "$(basename "$f" .yml)" "$(value "$f" lxc_hostname)" "$vmid"
+    done
+    exit 0
+fi
+
+name=$1
+shift
+
+file="$VARS/$name.yml"
+if [ ! -f "$file" ]; then
+    file=$(grep -l "^lxc_hostname:[[:space:]]*\"\?$name\"\?$" "$VARS"/*.yml | head -1 || true)
+fi
+[ -n "$file" ] && [ -f "$file" ] || { echo "no tenant named $name" >&2; exit 1; }
+
+vmid=$(value "$file" lxc_vmid)
+[ -n "$vmid" ] || { echo "$name has no lxc_vmid" >&2; exit 1; }
+
+address=$(ssh proxmox "pct exec $vmid -- ip -4 -o addr show dev eth0" 2>/dev/null |
+    sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+[ -n "$address" ] || { echo "$name ($vmid) has no address -- is it running?" >&2; exit 1; }
+
+key=$(value "$ROOT/inventory/group_vars/tenants.yml" ansible_ssh_private_key_file)
+case $key in "~/"*) key="$HOME/${key#\~/}" ;; esac
+
+exec ssh -i "$key" -o IdentitiesOnly=yes "root@$address" "$@"

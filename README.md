@@ -104,6 +104,7 @@ scripts/
   with-secrets           asks for the passphrase, once, before ansible forks
   secret                 put a secret into the database, or take one out
   wg-client              create and remove WireGuard clients
+  ssh                    ssh into a tenant as root, by name
 ```
 
 **Data lives in inventory; mechanism lives in roles.** A tenant's vmid, mounts and network are written out in its own `host_vars` file, not hidden behind a map or a loop.
