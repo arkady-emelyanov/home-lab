@@ -5,7 +5,7 @@
 # Stops qBittorrent when the tunnel has gone quiet, and starts it again when the
 # tunnel recovers.
 #
-# It deliberately does not restart WireGuard. reresolve-dns already handles the
+# It deliberately does not restart WireGuard. wg-reresolve already handles the
 # case it can fix -- a rotated endpoint address -- and if that has not worked,
 # restarting the tunnel will not help either. What matters then is that the
 # torrent client is not running, so nothing leaves over the home address in the

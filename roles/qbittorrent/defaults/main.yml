@@ -21,10 +21,10 @@ qbittorrent_wg_entry: wireguard/wg0.conf
 # When that address leaves rotation the interface stays up and handshakes
 # silently stop -- which is the failure this tenant was built around.
 #
-# reresolve-dns.sh ships with wireguard-tools. Every interval it compares each
-# peer's last handshake against a threshold and, if stale, re-runs
-# `wg set <iface> peer <key> endpoint <host:port>`, picking up whatever the name
-# resolves to now. The tunnel is never torn down.
+# wg-reresolve.sh runs every interval, compares each peer's last handshake
+# against a threshold and, if stale, runs `wg set <iface> peer <key> endpoint
+# <addr:port>` with whatever the name resolves to now. The tunnel is never torn
+# down.
 qbittorrent_reresolve_interval: 30s
 # 135s: WireGuard rekeys about every 120s, so anything older means handshakes
 # are genuinely failing rather than the link merely being idle.
@@ -36,7 +36,7 @@ qbittorrent_reresolve_interval: 30s
 # to start it again. Keepalive keeps a packet flowing every 25s, so a stale
 # handshake means the tunnel is broken rather than unused.
 #
-# reresolve-dns.sh applies the same threshold, so it depends on this too.
+# wg-reresolve.sh applies the same threshold, so it depends on this too.
 qbittorrent_handshake_stale_after: 135
 
 # --- Kill switch ------------------------------------------------------------
@@ -44,8 +44,16 @@ qbittorrent_handshake_stale_after: 135
 # The hard boundary. Without it a dead tunnel means torrent traffic leaves over
 # your home address, and nothing says so.
 qbittorrent_lan: 192.168.0.0/24
+# Blocky, on the LAN. The config's DNS servers are reachable only through the
+# tunnel, so anything that has to work while the tunnel is down resolves here
+# instead: the endpoint re-resolver, and apt.
+qbittorrent_lan_resolver: 192.168.0.40
+# The route rule that keeps apt off the tunnel. It has to sort before wg-quick's
+# own, which it places at 32764 and 32765.
+qbittorrent_apt_rule_priority: 1000
 # Allowed to anywhere rather than to the endpoint's address, because that
-# address rotates. The handshake is the only thing this permits off-tunnel.
+# address rotates. Apart from package downloads, the handshake is the only
+# thing permitted off-tunnel.
 qbittorrent_wg_port: 51820
 
 # --- qBittorrent ------------------------------------------------------------

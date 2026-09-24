@@ -1,0 +1,85 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Managed by Ansible (roles/qbittorrent). Edits here are overwritten.
+#
+# Points each peer whose handshake has gone stale at a fresh address for its
+# Endpoint name.
+#
+# This replaces the reresolve-dns.sh that ships with wireguard-tools, which
+# resolves through the system resolver. Here that resolver is the config's DNS
+# line, and it is reached through the tunnel -- so the moment the endpoint's
+# address leaves rotation the lookup that would fix it has nowhere to go, and
+# the tunnel stays down until someone notices. The name is asked of blocky
+# first, which the kill switch permits as LAN traffic and which answers whether
+# or not the tunnel is up, and of the system resolver only if blocky does not.
+# What that discloses is the provider's hostname, which the handshake to its
+# address discloses anyway; every other lookup still goes through the tunnel.
+#
+# The answer can still contain the address that just died, so an address other
+# than the current one is preferred when there is a choice.
+set -eu
+
+IFACE="{{ qbittorrent_wg_interface }}"
+CONFIG="/etc/wireguard/$IFACE.conf"
+RESOLVER="{{ qbittorrent_lan_resolver }}"
+STALE_AFTER={{ qbittorrent_handshake_stale_after }}
+
+# Raw from here: the length of a bash array is written with a brace and a
+# hash, which Jinja reads as the start of a comment.
+{% raw %}
+lookup() {
+    dig +short +time=2 +tries=2 A "$@" | grep -E '^[0-9.]+$' || true
+}
+
+reresolve() {
+    local key=$1 endpoint=$2
+    local host=${endpoint%:*} port=${endpoint##*:}
+
+    # An address rather than a name: there is nothing to re-resolve.
+    [[ $host =~ ^[0-9.]+$ ]] && return 0
+
+    local latest
+    latest=$(wg show "$IFACE" latest-handshakes | awk -v k="$key" '$1 == k {print $2}')
+    (( $(date +%s) - ${latest:-0} > STALE_AFTER )) || return 0
+
+    local current addresses=() fresh=()
+    current=$(wg show "$IFACE" endpoints | awk -v k="$key" '$1 == k {print $2}')
+    mapfile -t addresses < <(lookup "@$RESOLVER" "$host")
+    # Blocky down is its own outage; the tunnel's resolver may still answer if
+    # only the handshake is stale rather than the tunnel gone.
+    (( ${#addresses[@]} > 0 )) || mapfile -t addresses < <(lookup "$host")
+    if (( ${#addresses[@]} == 0 )); then
+        logger -t wg-reresolve "$host did not resolve through $RESOLVER or the tunnel"
+        return 0
+    fi
+
+    for a in "${addresses[@]}"; do
+        [[ "$a:$port" != "$current" ]] && fresh+=("$a")
+    done
+    (( ${#fresh[@]} > 0 )) || fresh=("${addresses[@]}")
+
+    local chosen=${fresh[RANDOM % ${#fresh[@]}]}
+    logger -t wg-reresolve "handshake stale on $IFACE; endpoint $current -> $chosen:$port"
+    wg set "$IFACE" peer "$key" endpoint "$chosen:$port"
+}
+
+# Walk the config for [Peer] sections, pairing each PublicKey with its Endpoint.
+key="" endpoint="" in_peer=0
+flush() {
+    if (( in_peer )) && [[ -n $key && -n $endpoint ]]; then
+        reresolve "$key" "$endpoint"
+    fi
+    key="" endpoint="" in_peer=0
+}
+while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%%#*}
+    line=${line//[[:space:]]/}
+    case $line in
+        \[Peer\]) flush; in_peer=1 ;;
+        \[*) flush ;;
+        PublicKey=*) key=${line#PublicKey=} ;;
+        Endpoint=*) endpoint=${line#Endpoint=} ;;
+    esac
+done < "$CONFIG"
+flush
+{% endraw %}

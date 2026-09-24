@@ -6,4 +6,4 @@ Requires=wg-quick@{{ qbittorrent_wg_interface }}.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/reresolve-dns.sh {{ qbittorrent_wg_interface }}
+ExecStart=/usr/local/bin/wg-reresolve.sh

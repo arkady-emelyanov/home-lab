@@ -10,6 +10,9 @@
       # through the tunnel instead of to the LAN resolver, so it matters here
       # more than the DNS setting usually would.
       - openresolv
+      # dig, for the endpoint re-resolver: it asks the LAN resolver directly
+      # rather than going through resolv.conf and the tunnel.
+      - bind9-dnsutils
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -42,17 +45,7 @@
   no_log: true
   notify: Restart wireguard
 
-- name: Install the endpoint re-resolver
-  # Ships with wireguard-tools as an example, so it is not on PATH.
-  ansible.builtin.copy:
-    src: /usr/share/doc/wireguard-tools/examples/reresolve-dns/reresolve-dns.sh
-    dest: /usr/local/bin/reresolve-dns.sh
-    remote_src: true
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Install the kill switch and the watchdog
+- name: Install the kill switch, the watchdog and the endpoint re-resolver
   ansible.builtin.template:
     src: "{{ item.src }}"
     dest: "{{ item.dest }}"
@@ -62,6 +55,7 @@
   loop:
     - {src: killswitch.sh.j2, dest: /usr/local/bin/qbittorrent-killswitch.sh}
     - {src: wg-watchdog.sh.j2, dest: /usr/local/bin/wg-watchdog.sh}
+    - {src: wg-reresolve.sh.j2, dest: /usr/local/bin/wg-reresolve.sh}
   loop_control:
     label: "{{ item.dest }}"
   notify: Reload the kill switch

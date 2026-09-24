@@ -3,16 +3,18 @@
 # Managed by Ansible (roles/qbittorrent). Edits here are overwritten.
 #
 # Everything outbound goes through {{ qbittorrent_wg_interface }} or does not
-# go. The two exceptions are the LAN, so the WebUI stays reachable and Ansible
-# can still connect, and the WireGuard handshake itself.
+# go. The exceptions are the LAN, so the WebUI stays reachable and Ansible can
+# still connect; the WireGuard handshake itself; and package downloads, which
+# leave over the home connection whether or not the tunnel is up.
 #
 # The handshake is permitted to any address rather than to the endpoint's,
 # because the provider rotates that address on a 5-second TTL. Pinning it here
-# would break the tunnel exactly when reresolve-dns is trying to fix it.
+# would break the tunnel exactly when wg-reresolve is trying to fix it.
 set -e
 
 iptables -F OUTPUT
 iptables -F INPUT
+iptables -t nat -F OUTPUT
 
 # Established traffic first, or applying these rules drops the session doing it.
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -30,6 +32,27 @@ iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport {{ qbittorrent_webui_
 iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport 22 -j ACCEPT
 iptables -A INPUT  -s {{ qbittorrent_lan }} -p tcp --dport {{ qbittorrent_health_port }} -j ACCEPT
 iptables -A OUTPUT -d {{ qbittorrent_lan }} -j ACCEPT
+
+# Package downloads, over the home connection rather than the tunnel.
+#
+# They are the one thing a converge needs from the internet, and the converge
+# is how a broken tunnel gets fixed -- so they cannot depend on it. apt fetches
+# as its sandbox user, never as root and never as qBittorrent's account, which
+# makes the exemption exact: it opens nothing for the torrent client.
+#
+# Three pieces, since permitting the packets is not enough on its own. A route
+# rule sends this user's traffic by the main table, ahead of the rules wg-quick
+# adds to push everything into the tunnel. Its lookups are redirected to the
+# LAN resolver, because the config's DNS servers are reached through the tunnel
+# too. And the firewall lets out its HTTP and HTTPS.
+APT_UID=$(id -u _apt)
+ip rule del priority {{ qbittorrent_apt_rule_priority }} 2>/dev/null || true
+ip rule add priority {{ qbittorrent_apt_rule_priority }} uidrange "$APT_UID-$APT_UID" lookup main
+for proto in udp tcp; do
+    iptables -t nat -A OUTPUT -m owner --uid-owner "$APT_UID" -p $proto --dport 53 \
+        -j DNAT --to-destination {{ qbittorrent_lan_resolver }}:53
+done
+iptables -A OUTPUT -m owner --uid-owner "$APT_UID" -p tcp -m multiport --dports 80,443 -j ACCEPT
 
 # DHCP, or the container loses its lease and with it the LAN rules above.
 iptables -A OUTPUT -p udp --dport 67 -j ACCEPT
