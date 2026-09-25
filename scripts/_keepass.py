@@ -108,7 +108,7 @@ def put(entry, value, notes=None):
 
 
 def attach(entry, source, notes=None):
-    """Store a file as an attachment on an entry, named after the file."""
+    """Store a file as an attachment on an entry, named after the entry."""
     parent = str(pathlib.PurePath(f"{GROUP}/{entry}").parent)
     for depth in range(len(pathlib.PurePath(parent).parts)):
         run(["mkdir", "/".join(pathlib.PurePath(parent).parts[: depth + 1])])
