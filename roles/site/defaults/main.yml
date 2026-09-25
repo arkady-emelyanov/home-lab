@@ -22,7 +22,11 @@ site_config_path: /etc/cloudflared/config.yml
 
 # Pinned. cloudflared is the thing standing between the internet and this
 # container; it should change when someone decides it changes.
-site_cloudflared_version: "2026.9.1"
+site_cloudflared_version: "2026.9.3"
+# The digest GitHub publishes for the release asset. It is also what makes a
+# version bump take effect: without a checksum get_url keeps any file already
+# at the destination.
+site_cloudflared_sha256: "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2"
 
 # nginx binds the loopback only. The single path in is the tunnel, which runs
 # in this same container, so there is no reason for the listener to be visible
@@ -30,9 +34,6 @@ site_cloudflared_version: "2026.9.1"
 site_nginx_address: 127.0.0.1
 site_nginx_port: 8080
 
-# Placeholder until there is something to serve. When a generated site lands
-# here, drop the error_page and let nginx serve the root normally.
-site_status_code: 418
 site_root: /var/www/site
 
 # The DNS record is created from the machine running Ansible, not from the

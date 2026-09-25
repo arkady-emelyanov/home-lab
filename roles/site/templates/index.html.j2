@@ -1,0 +1,559 @@
+<!doctype html>
+<!-- {{ ansible_managed }} -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>{{ site_domain }}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #000;
+    --fg: rgba(236, 240, 255, 0.86);
+    --dim: rgba(236, 240, 255, 0.42);
+    --faint: rgba(236, 240, 255, 0.26);
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font: 300 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .title {
+    position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(20px, env(safe-area-inset-top));
+    pointer-events: none;
+  }
+  .title h1 {
+    margin: 0; font-weight: 300; font-size: 15px; letter-spacing: 0.24em;
+  }
+  .fade { animation: fade 2.4s ease both; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="title fade">
+  <h1>{{ site_domain }}</h1>
+</div>
+
+
+
+
+<script>
+(() => {
+"use strict";
+
+// ---------------------------------------------------------------- setup
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl", { antialias: false, alpha: false, depth: false, powerPreference: "high-performance" });
+if (!gl) { document.body.insertAdjacentHTML("beforeend", "<p style='position:fixed;top:45%;width:100%;text-align:center'>WebGL is not available.</p>"); return; }
+
+const coarse = matchMedia("(pointer: coarse)").matches;
+const small = Math.min(screen.width, screen.height) < 700;
+const N = (coarse || small) ? 90000 : 200000;   // Milky Way points; satellites add in proportion to luminosity
+
+// Deterministic PRNG so the galaxy looks the same on every load.
+let seed = 0x9e3779b9;
+function rnd() {
+  seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+  let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+function gauss() {
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const DEG = Math.PI / 180;
+
+// ---------------------------------------------------------------- galactic model
+// Galactocentric frame, kpc: x from the Sun toward the centre, y toward l = 90° (direction of rotation), z toward the NGP.
+const R0 = 8.15;                        // Sun–centre distance (Reid et al. 2019)
+const SUN = [-R0, 0, 0.02];
+
+// Reid et al. 2019, Table 2: ln(R/Rk) = -(β - βk) tan ψ ; β = Galactocentric azimuth, 0 toward the Sun, increasing with l.
+// [name, βk, Rk, ψ<, ψ>, βmin, βmax (measured range), weight for old stars, weight for young stars]
+const ARMS = [
+  ["Norma–Outer",      18, 4.46, -1.0, 19.5,  -15,  71, 0.35, 1.0],
+  ["Scutum–Centaurus", 23, 4.91, 14.1, 12.1,    0, 104, 1.00, 1.0],
+  ["Sagittarius–Car.", 24, 6.04, 17.1,  1.0,   -2,  97, 0.35, 1.0],
+  ["Local",             9, 8.26, 11.4, 11.4,   -8,  34, 0.10, 0.45],
+  ["Perseus",          40, 8.87, 10.3,  8.7,  -23, 115, 1.00, 1.0],
+  ["Outer",            18, 12.24, 3.0,  9.4,  -16,  71, 0.30, 0.7],
+];
+const PSI_EXT = 12 * DEG; // pitch used to continue an arm past its measured range (the far side is unobserved)
+
+function armR(a, bDeg) {
+  const [, bk, Rk, pLo, pHi, bMin, bMax] = a;
+  const f = (b) => Rk * Math.exp(-(b - bk) * DEG * Math.tan((b < bk ? pLo : pHi) * DEG));
+  if (bDeg < bMin) return f(bMin) * Math.exp(-(bDeg - bMin) * DEG * Math.tan(PSI_EXT));
+  if (bDeg > bMax) return f(bMax) * Math.exp(-(bDeg - bMax) * DEG * Math.tan(PSI_EXT));
+  return f(bDeg);
+}
+function extentOf(a) {           // how far to extrapolate: short spur for Local, most of a turn for the rest
+  return a[0] === "Local" ? [-40, 70] : [a[5] - 150, a[6] + 170];
+}
+
+// Warp (Chen et al. 2019): onset near 9 kpc, line of nodes ≈ 17.5° from the Sun direction, rising toward l ≈ 90°.
+function warpZ(x, y, R) {
+  if (R < 9) return 0;
+  const phi = Math.atan2(y, -x) - 17.5 * DEG;
+  return 0.028 * (R - 9) * (R - 9) * Math.sin(phi);
+}
+function flare(R) { return 1 + Math.max(0, R - 9) * 0.12; }
+
+// Colours (linear-ish RGB)
+const C_BULGE = [1.00, 0.80, 0.58];
+const C_OLD   = [1.00, 0.88, 0.74];
+const C_DISK  = [0.86, 0.88, 0.96];
+const C_YOUNG = [0.58, 0.72, 1.00];
+const C_HII   = [1.00, 0.52, 0.66];
+const C_HALO  = [1.00, 0.86, 0.70];
+
+const pos = [], col = [];
+function push(x, y, z, c, flux) {
+  pos.push(x, y, z);
+  col.push(c[0], c[1], c[2], flux);
+}
+// Most tracers are faint; a few are bright (a steep luminosity function). Faint, invisible ones are simply not generated.
+function lum(bright) { const u = rnd(); return 0.35 + bright * Math.pow(u, 9); }
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+
+function armPoint(a, sigma, h) {
+  // pick β along the extended arm, weighted by exponential disk surface density × arc length
+  const [b0, b1] = extentOf(a);
+  for (let tries = 0; tries < 50; tries++) {
+    const b = b0 + rnd() * (b1 - b0);
+    const R = armR(a, b);
+    if (R < 3.0 || R > 17.5) continue;
+    const w = Math.exp(-(R - 3) / 3.2) * (R / 6);
+    if (rnd() > w) continue;
+    const s = sigma * (0.7 + R / 12);
+    const Rr = R + gauss() * s;
+    const bb = b * DEG + gauss() * s / R * 0.6;
+    const x = -Rr * Math.cos(bb), y = Rr * Math.sin(bb);
+    const z = gauss() * h * flare(Rr) + warpZ(x, y, Rr);
+    return [x, y, z, Rr];
+  }
+  return null;
+}
+function pickArm(k) {
+  let tot = 0; for (const a of ARMS) tot += a[k];
+  let u = rnd() * tot;
+  for (const a of ARMS) { u -= a[k]; if (u <= 0) return a; }
+  return ARMS[0];
+}
+
+const barAngle = 27 * DEG;                                   // Wegg & Gerhard 2015
+const bax = -Math.cos(barAngle), bay = Math.sin(barAngle);   // near end toward the Sun, at positive l
+function barFrame(u, v, w) { return [u * bax - v * bay, u * bay + v * bax, w]; }
+
+function build() {
+  const n = (f) => Math.round(N * f);
+
+  // thin disk, smooth: Rd = 2.6 kpc, hz = 0.3 kpc, inner hole where the bar dominates
+  for (let i = 0, m = n(0.26); i < m;) {
+    const R = -2.6 * Math.log(rnd() * rnd());
+    if (R > 17.5 || rnd() > smooth(1.8, 4.2, R)) continue;
+    const t = rnd() * 2 * Math.PI, x = R * Math.cos(t), y = R * Math.sin(t);
+    const z = gauss() * 0.30 * flare(R) * 0.6 + warpZ(x, y, R);
+    push(x, y, z, mix(C_OLD, C_DISK, Math.min(1, R / 12)), lum(2.0));
+    i++;
+  }
+  // thick disk: Rd = 2.0, hz = 0.9
+  for (let i = 0, m = n(0.06); i < m;) {
+    const R = -2.0 * Math.log(rnd() * rnd());
+    if (R > 15) continue;
+    const t = rnd() * 2 * Math.PI, x = R * Math.cos(t), y = R * Math.sin(t);
+    push(x, y, gauss() * 0.9 * 0.6 + warpZ(x, y, R), C_OLD, lum(1.0));
+    i++;
+  }
+  // old stars in the arms: concentrated in the two major stellar arms (Scutum–Centaurus, Perseus; Churchwell et al. 2009)
+  for (let i = 0, m = n(0.17); i < m;) {
+    const p = armPoint(pickArm(7), 0.55, 0.22); if (!p) continue;
+    push(p[0], p[1], p[2], mix(C_OLD, C_DISK, Math.min(1, p[3] / 11)), lum(2.5)); i++;
+  }
+  // young, bright blue stars trace all four gas arms
+  for (let i = 0, m = n(0.17); i < m;) {
+    const p = armPoint(pickArm(8), 0.22, 0.07); if (!p) continue;
+    push(p[0], p[1], p[2], C_YOUNG, lum(5.0)); i++;
+  }
+  // HII regions: sparse pink knots on the arms
+  for (let i = 0, m = n(0.008); i < m;) {
+    const p = armPoint(pickArm(8), 0.12, 0.05); if (!p) continue;
+    const k = 3 + Math.floor(rnd() * 5);
+    for (let j = 0; j < k; j++) push(p[0] + gauss() * 0.06, p[1] + gauss() * 0.06, p[2] + gauss() * 0.03, C_HII, lum(3.0));
+    i++;
+  }
+  // long bar: half-length ~5 kpc, thin
+  for (let i = 0, m = n(0.07); i < m;) {
+    const u = (rnd() * 2 - 1) * 5.0, v = gauss() * 0.55, w = gauss() * 0.18;
+    if (rnd() > 1 - Math.pow(Math.abs(u) / 5.0, 3)) continue;
+    const q = barFrame(u, v, w); push(q[0], q[1], q[2], C_BULGE, lum(1.5)); i++;
+  }
+  // boxy/peanut bulge: triaxial, exponential in a boxy radius (Wegg & Gerhard 2013 scale lengths)
+  for (let i = 0, m = n(0.19); i < m;) {
+    const u = laplace(0.75), v = laplace(0.32), w = laplace(0.26);
+    const rb = Math.pow(Math.pow(Math.abs(u) / 0.75, 4) + Math.pow(Math.abs(v) / 0.32, 4), 0.25);
+    if (rb > 6) continue;
+    const q = barFrame(u, v, w); push(q[0], q[1], q[2], C_BULGE, lum(1.2)); i++;
+  }
+  // nuclear stellar disk / cluster
+  for (let i = 0, m = n(0.02); i < m; i++) push(gauss() * 0.15, gauss() * 0.15, gauss() * 0.05, [1, 0.9, 0.78], lum(1.0));
+  // stellar halo: ρ ∝ r^-3.5, flattened q = 0.7
+  for (let i = 0, m = n(0.04); i < m; i++) {
+    const a = Math.pow(2, -0.5), b = Math.pow(80, -0.5);
+    const r = Math.pow(a - rnd() * (a - b), -2);
+    const ct = rnd() * 2 - 1, st = Math.sqrt(1 - ct * ct), ph = rnd() * 2 * Math.PI;
+    push(r * st * Math.cos(ph), r * st * Math.sin(ph), r * ct * 0.7, C_HALO, lum(2.0));
+  }
+
+  // satellites at measured positions (l, b in degrees, heliocentric d in kpc, M_V), McConnachie 2012.
+  // Points ∝ luminosity relative to the Milky Way (M_V ≈ -20.8); anything too faint to show is left out.
+  const MW_MV = -20.8, Npts = pos.length / 3;
+  const SAT = [
+    // name,        l,       b,      d,   M_V,   shape, size (kpc)
+    ["LMC",      280.47, -32.89,  50.0, -18.1, "disk",  1.4],
+    ["SMC",      302.80, -44.30,  64.0, -16.8, "irr",   0.6],
+    ["Sgr",        5.57, -14.17,  26.7, -13.5, "elong", 1.6],
+    ["Fornax",   237.10, -65.65, 147.0, -13.4, "sph",   0.7],
+    ["Leo I",    225.99,  49.11, 254.0, -12.0, "sph",   0.25],
+    ["Sculptor", 287.53, -83.16,  86.0, -11.1, "sph",   0.28],
+    ["Leo II",   220.17,  67.23, 233.0,  -9.8, "sph",   0.18],
+    ["Sextans",  243.50,  42.27,  86.0,  -9.3, "sph",   0.7],
+    ["Carina",   260.11, -22.22, 105.0,  -9.1, "sph",   0.25],
+    ["Draco",     86.37,  34.72,  76.0,  -8.8, "sph",   0.22],
+    ["Ursa Minor",104.97, 44.80,  76.0,  -8.8, "sph",   0.18],
+  ];
+  const sats = {};
+  for (const [name, l, b, d, mv, shape, size] of SAT) {
+    const cx = d * Math.cos(b * DEG) * Math.cos(l * DEG) - R0;
+    const cy = d * Math.cos(b * DEG) * Math.sin(l * DEG);
+    const cz = d * Math.sin(b * DEG) + SUN[2];
+    sats[name] = [cx, cy, cz];
+    const k = Math.round(Npts * Math.pow(10, -0.4 * (mv - MW_MV)));
+    if (k < 6) continue;
+    const c = shape === "disk" || shape === "irr" ? [0.78, 0.84, 1.0] : C_HALO;
+    for (let i = 0; i < k; i++) {
+      let x, y, z;
+      if (shape === "disk") {          // LMC: exponential disk inclined ~30°, with its off-centre bar
+        const R = -size * Math.log(rnd() * rnd()), t = rnd() * 2 * Math.PI;
+        x = R * Math.cos(t); y = R * Math.sin(t) * 0.9; z = gauss() * 0.25;
+        if (rnd() < 0.22) { x = gauss() * 1.1; y = gauss() * 0.3 + 0.2; z = gauss() * 0.2; }
+        // we see the LMC nearly face-on (i ≈ 30°): disk normal close to the Sun–LMC line of sight
+        const n = norm([cx - SUN[0] + 0.3 * d, cy - SUN[1], cz - SUN[2]]);
+        const e1 = norm(cross(n, [0, 0, 1])), e2 = cross(n, e1);
+        [x, y, z] = [x * e1[0] + y * e2[0] + z * n[0], x * e1[1] + y * e2[1] + z * n[1], x * e1[2] + y * e2[2] + z * n[2]];
+      } else if (shape === "irr") {    // SMC: elongated along the line of sight
+        x = gauss() * size; y = gauss() * size * 0.6; z = gauss() * size * 0.5;
+        const t = Math.atan2(cy, cx); const x2 = x * Math.cos(t) - y * Math.sin(t); y = x * Math.sin(t) + y * Math.cos(t); x = x2 * 1.15;
+      } else if (shape === "elong") {  // Sgr: tidally stretched along its orbit, roughly perpendicular to the disk
+        x = gauss() * size * 0.35; y = gauss() * size * 0.3; z = gauss() * size;
+      } else {                         // dwarf spheroidal: Plummer sphere
+        const r = size / Math.sqrt(Math.pow(rnd(), -2 / 3) - 1);
+        if (r > size * 6) { i--; continue; }
+        const ct = rnd() * 2 - 1, st = Math.sqrt(1 - ct * ct), ph = rnd() * 2 * Math.PI;
+        x = r * st * Math.cos(ph); y = r * st * Math.sin(ph); z = r * ct;
+      }
+      push(cx + x, cy + y, cz + z, c, lum(shape === "sph" ? 1.0 : 3.0));
+    }
+  }
+  return sats;
+}
+function norm(v) { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function smooth(e0, e1, x) { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); }
+function laplace(s) { const u = rnd() - 0.5; return -s * Math.sign(u) * Math.log(1 - 2 * Math.abs(u)); }
+
+// Dust: thin layer on the inner edges of the arms, reddening what lies behind it.
+function buildDust() {
+  const d = [];
+  const m = Math.round(N * 0.12);
+  for (let i = 0; i < m;) {
+    const a = pickArm(8);
+    const p = armPoint(a, 0.16, 0.05); if (!p) continue;
+    if (p[3] > 12.5) continue;
+    const R = p[3], f = 0.93;                     // lanes sit slightly inside the stellar arm
+    d.push(p[0] * f, p[1] * f, p[2], 1);
+    i++;
+  }
+  for (let i = 0, m2 = Math.round(N * 0.03); i < m2;) {   // diffuse inner dust ring
+    const R = 2.5 + rnd() * 4, t = rnd() * 2 * Math.PI;
+    d.push(R * Math.cos(t), R * Math.sin(t), gauss() * 0.04, 0.6);
+    i++;
+  }
+  return d;
+}
+
+const sats = build();
+const dust = buildDust();
+
+// ---------------------------------------------------------------- GL
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, shader(gl.VERTEX_SHADER, vs)); gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
+  gl.bindAttribLocation(p, 0, "aPos"); gl.bindAttribLocation(p, 1, "aCol");
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const VS_STARS = `
+precision highp float;
+attribute vec3 aPos; attribute vec4 aCol;
+uniform mat4 uMV, uP; uniform float uDpr, uRef, uExposure, uFade, uScale, uHaze;
+varying vec3 vCol;
+void main() {
+  vec4 mv = uMV * vec4(aPos, 1.0);
+  gl_Position = uP * mv;
+  float persp = clamp(uRef / -mv.z, 0.4, 3.0);
+  float flux = aCol.a * uExposure * uFade;
+  float size = uHaze > 0.0
+    ? uHaze * uDpr * persp                                   // unresolved light: wide, faint sprites
+    : max((1.1 + 1.25 * sqrt(aCol.a)) * uDpr * sqrt(persp * uScale), 1.5 * uDpr);
+  gl_PointSize = min(size, 64.0 * uDpr);
+  // flux-conserving: a larger sprite is proportionally dimmer per pixel
+  vCol = aCol.rgb * flux * (uDpr * uDpr * 2.2) / (size * size) * persp;
+}`;
+const FS_STARS = `
+precision mediump float;
+varying vec3 vCol;
+void main() {
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(p, p);
+  if (r2 > 1.0) discard;
+  gl_FragColor = vec4(vCol * exp(-r2 * 3.5), 1.0);
+}`;
+const VS_DUST = `
+precision highp float;
+attribute vec3 aPos; attribute vec4 aCol;
+uniform mat4 uMV, uP; uniform float uDpr, uRef, uFade, uPpk;
+varying float vA;
+void main() {
+  vec4 mv = uMV * vec4(aPos, 1.0);
+  gl_Position = uP * mv;
+  float persp = clamp(uRef / -mv.z, 0.4, 3.0);
+  gl_PointSize = max(0.11 * uPpk * uDpr * persp, 1.5 * uDpr);
+  // only dust on the near side can hide anything; fade it out behind the centre
+  float front = smoothstep(-1.5, 2.0, mv.z + uRef);
+  vA = aCol.a * front * uFade * 0.28;
+}`;
+const FS_DUST = `
+precision mediump float;
+varying float vA;
+void main() {
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(p, p);
+  if (r2 > 1.0) discard;
+  float a = vA * (1.0 - r2);
+  gl_FragColor = vec4(vec3(0.62, 0.78, 0.95) * a, 1.0);   // absorbs blue more than red
+}`;
+
+const pStars = program(VS_STARS, FS_STARS);
+const pDust = program(VS_DUST, FS_DUST);
+
+function interleave(p, c) {
+  const n = p.length / 3, a = new Float32Array(n * 7);
+  for (let i = 0; i < n; i++) {
+    a[i * 7] = p[i * 3]; a[i * 7 + 1] = p[i * 3 + 1]; a[i * 7 + 2] = p[i * 3 + 2];
+    a[i * 7 + 3] = c[i * 4]; a[i * 7 + 4] = c[i * 4 + 1]; a[i * 7 + 5] = c[i * 4 + 2]; a[i * 7 + 6] = c[i * 4 + 3];
+  }
+  const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, a, gl.STATIC_DRAW);
+  return { buf: b, count: n };
+}
+const starBuf = interleave(pos, col);
+const hazePos = [], hazeCol = [];
+for (let i = 0, n = pos.length / 3; i < n; i++) {
+  if (rnd() > 0.05) continue;
+  hazePos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+  hazeCol.push(col[i * 4], col[i * 4 + 1], col[i * 4 + 2], 1);
+}
+const hazeBuf = interleave(hazePos, hazeCol);
+const dustCol = []; const dustPos = [];
+for (let i = 0; i < dust.length; i += 4) { dustPos.push(dust[i], dust[i + 1], dust[i + 2]); dustCol.push(0, 0, 0, dust[i + 3]); }
+const dustBuf = interleave(dustPos, dustCol);
+pos.length = 0; col.length = 0;
+
+function bindBuf(b) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, b.buf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
+}
+const U = (p, names) => Object.fromEntries(names.map(n => [n, gl.getUniformLocation(p, n)]));
+const uS = U(pStars, ["uMV", "uP", "uDpr", "uRef", "uExposure", "uFade", "uScale", "uHaze"]);
+const uD = U(pDust, ["uMV", "uP", "uDpr", "uRef", "uFade", "uPpk"]);
+
+// ---------------------------------------------------------------- matrices (column-major)
+function mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s;
+  }
+  return o;
+}
+function rotX(t) { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); }
+function rotY(t) { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); }
+function rotZ(t) { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]); }
+function trans(x, y, z) { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); }
+function persp(fovy, asp, n, f) {
+  const t = 1 / Math.tan(fovy / 2);
+  return new Float32Array([t / asp,0,0,0, 0,t,0,0, 0,0,(f + n) / (n - f),-1, 0,0,2 * f * n / (n - f),0]);
+}
+function xform(m, v) {
+  const x = v[0], y = v[1], z = v[2];
+  return [m[0]*x + m[4]*y + m[8]*z + m[12], m[1]*x + m[5]*y + m[9]*z + m[13], m[2]*x + m[6]*y + m[10]*z + m[14], m[3]*x + m[7]*y + m[11]*z + m[15]];
+}
+
+// ---------------------------------------------------------------- view
+// Seen from above the northern side, tilted like a photograph of a nearby spiral; the Magellanic Clouds fall behind and below.
+const VIEW_AZ = 118 * DEG;      // azimuth of the camera around the galactic pole
+const VIEW_EL = 24 * DEG;       // elevation above the disk plane
+const FOV = 22 * DEG;
+const OFFSET = [-0.12, 0.10];   // galaxy sits up and to the left of centre
+const DISK_R = 14.5;   // what the framing fits; the faint outer disk may run past the edges
+
+let W = 0, H = 0, dpr = 1, dist = 60, roll = 0, ppk = 52, restYaw = 0, P;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, coarse ? 2 : 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  const asp = W / H;
+  restYaw = W < H ? 7 * DEG : 0;   // portrait rests turned, as if swiped to the right
+  // lay the disk along the screen diagonal, like the reference photograph
+  roll = Math.min(42, Math.max(22, Math.atan2(H, W) / DEG * 0.8)) * DEG;
+  const a = DISK_R, b = DISK_R * Math.sin(VIEW_EL);
+  const hw = Math.sqrt(a * a * Math.cos(roll) ** 2 + b * b * Math.sin(roll) ** 2);
+  const hh = Math.sqrt(a * a * Math.sin(roll) ** 2 + b * b * Math.cos(roll) ** 2);
+  const tv = Math.tan(FOV / 2), th = tv * asp;
+  dist = Math.max(hw / th, hh / tv) * 1.02;
+  P = persp(FOV, asp, 0.5, 2000);
+  P[8] = -OFFSET[0]; P[9] = -OFFSET[1];   // shift the image on screen, in NDC, without changing the view angle
+  ppk = (H / 2) / (tv * dist);          // CSS px per kpc at the centre
+  dirty = true;
+}
+
+const BASE = mul(rotX(-(Math.PI / 2 - VIEW_EL)), rotZ(-VIEW_AZ - Math.PI / 2));
+
+// ---------------------------------------------------------------- input: pointer parallax + device motion
+const MAX_YAW = 9 * DEG, MAX_PITCH = 7 * DEG;
+let tx = 0, ty = 0;          // target, -1..1
+let cx = 0, cy = 0;          // smoothed
+let dirty = true;
+
+window.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse" || e.buttons) {
+    tx = (e.clientX / W) * 2 - 1; ty = (e.clientY / H) * 2 - 1;
+    usingMotion = false;
+  }
+}, { passive: true });
+window.addEventListener("pointerleave", () => { tx = 0; ty = 0; });
+window.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse" && !usingMotion) { tx = 0; ty = 0; } });
+document.addEventListener("mouseleave", () => { tx = 0; ty = 0; });
+
+let usingMotion = false, base = null;
+function onOrient(e) {
+  if (e.beta == null || e.gamma == null) return;
+  const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  let x, y;
+  if (ang === 90)       { x =  e.beta;  y = -e.gamma; }
+  else if (ang === -90 || ang === 270) { x = -e.beta; y = e.gamma; }
+  else if (ang === 180) { x = -e.gamma; y = -e.beta; }
+  else                  { x =  e.gamma; y =  e.beta; }
+  if (!base) base = { x, y };
+  // the rest position slowly follows how the phone is held, so only movement tilts the view
+  base.x += (x - base.x) * 0.015; base.y += (y - base.y) * 0.015;
+  tx = Math.max(-1, Math.min(1, (x - base.x) / 14));
+  ty = Math.max(-1, Math.min(1, (y - base.y) / 14));
+  usingMotion = true;
+}
+if (typeof DeviceOrientationEvent !== "undefined") {
+  if (typeof DeviceOrientationEvent.requestPermission === "function" && coarse) {
+    // iOS: permission must be requested from a user gesture, so the first tap anywhere asks
+    const ask = () => {
+      DeviceOrientationEvent.requestPermission().then((s) => {
+        if (s === "granted") window.addEventListener("deviceorientation", onOrient);
+      }).catch(() => {});
+    };
+    window.addEventListener("click", ask, { once: true });
+  } else {
+    window.addEventListener("deviceorientation", onOrient);
+  }
+}
+
+// ---------------------------------------------------------------- render loop
+gl.disable(gl.DEPTH_TEST);
+gl.enable(gl.BLEND);
+gl.clearColor(0, 0, 0, 1);
+const PPK_REF = 52;                  // px per kpc on a 1600×1000 window, where exposure was tuned
+const EXPOSURE = 1.0 * 200000 / N;   // fewer points on phones, same total light
+const HAZE = 9.0;
+const t0 = performance.now();
+let lastFade = -1;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const t = (now - t0) / 1000;
+  const intro = Math.min(1, t / 3.2);
+  const ease = 1 - Math.pow(1 - intro, 3);
+  const fade = Math.min(1, t / 1.8);
+
+  const k = usingMotion ? 0.12 : 0.06;
+  const nx = cx + (tx - cx) * k, ny = cy + (ty - cy) * k;
+  const moved = Math.abs(nx - cx) + Math.abs(ny - cy) > 1e-5;
+  cx = nx; cy = ny;
+  if (!moved && !dirty && intro >= 1 && fade === lastFade) return;   // idle: nothing to redraw
+  dirty = false; lastFade = fade;
+
+  // intro: settle from a slightly wider, more open view
+  const introYaw = (1 - ease) * -14 * DEG, introPitch = (1 - ease) * 10 * DEG;
+  const d = dist * (1 + (1 - ease) * 0.12);
+  const MV = mul(trans(0, 0, -d),
+             mul(rotX(cy * MAX_PITCH + introPitch),
+             mul(rotY(cx * MAX_YAW + restYaw + introYaw),
+             mul(rotZ(roll), BASE))));
+
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(pStars);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.uniformMatrix4fv(uS.uMV, false, MV); gl.uniformMatrix4fv(uS.uP, false, P);
+  gl.uniform1f(uS.uDpr, dpr); gl.uniform1f(uS.uRef, d);
+  const sc = ppk / PPK_REF;
+  gl.uniform1f(uS.uFade, fade); gl.uniform1f(uS.uScale, Math.min(1.3, Math.max(0.5, sc)));
+  gl.uniform1f(uS.uExposure, HAZE * EXPOSURE * sc * sc); gl.uniform1f(uS.uHaze, 0.9 * ppk);
+  bindBuf(hazeBuf);
+  gl.drawArrays(gl.POINTS, 0, hazeBuf.count);
+  gl.uniform1f(uS.uExposure, EXPOSURE * sc * sc); gl.uniform1f(uS.uHaze, 0);
+  bindBuf(starBuf);
+  gl.drawArrays(gl.POINTS, 0, starBuf.count);
+
+  gl.useProgram(pDust);
+  gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_COLOR);
+  gl.uniformMatrix4fv(uD.uMV, false, MV); gl.uniformMatrix4fv(uD.uP, false, P);
+  gl.uniform1f(uD.uDpr, dpr); gl.uniform1f(uD.uRef, d); gl.uniform1f(uD.uFade, fade); gl.uniform1f(uD.uPpk, ppk);
+  bindBuf(dustBuf);
+  gl.drawArrays(gl.POINTS, 0, dustBuf.count);
+
+}
+
+window.addEventListener("resize", resize);
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

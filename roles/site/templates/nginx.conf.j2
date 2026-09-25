@@ -4,33 +4,13 @@ server {
     server_name {{ site_domain }} www.{{ site_domain }};
 
     root {{ site_root }};
+    index index.html;
 
     # Cloudflare terminates TLS and reaches this over the tunnel, so the client
     # address arrives in a header rather than on the connection.
     real_ip_header CF-Connecting-IP;
 
-    # Nothing to serve yet, so every path answers {{ site_status_code }}. The
-    # body comes from error_page rather than `return {{ site_status_code }} "..."`,
-    # which would inline the markup into the config and send it as text/plain.
-    error_page {{ site_status_code }} /teapot.html;
-
     location / {
-        return {{ site_status_code }};
-    }
-
-    # `internal` is what stops the error_page redirect re-entering `location /`
-    # and looping: nginx has recursive_error_pages off, so without this block the
-    # body would be dropped and {{ site_status_code }} would return empty. The
-    # side effect is that asking for /teapot.html directly gets a 404 -- the page
-    # exists only as an error body, not as a document of its own.
-    location = /teapot.html {
-        internal;
-    }
-
-    # The one path that answers with a file rather than {{ site_status_code }}.
-    # An exact match is what it takes: `location /` returns the status for
-    # everything else, so without this the icon would arrive as the teapot page
-    # under an image content type, and the tab would show nothing.
-    location = /favicon.svg {
+        try_files $uri $uri/ =404;
     }
 }

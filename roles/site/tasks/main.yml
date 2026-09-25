@@ -11,6 +11,7 @@
     url: >-
       https://github.com/cloudflare/cloudflared/releases/download/{{ site_cloudflared_version }}/cloudflared-linux-amd64
     dest: /usr/local/bin/cloudflared
+    checksum: "sha256:{{ site_cloudflared_sha256 }}"
     owner: root
     group: root
     mode: "0755"
@@ -59,14 +60,15 @@
     group: root
     mode: "0755"
 
-- name: Install the placeholder page
+- name: Install the page
+  # A static file, like the favicon: nginx reads it off the disk on every
+  # request, so there is nothing to reload when it changes.
   ansible.builtin.template:
-    src: teapot.html.j2
-    dest: "{{ site_root }}/teapot.html"
+    src: index.html.j2
+    dest: "{{ site_root }}/index.html"
     owner: root
     group: root
     mode: "0644"
-  notify: Reload nginx
 
 - name: Install the favicon
   # A static file: nginx serves it straight off the disk, so there is nothing
