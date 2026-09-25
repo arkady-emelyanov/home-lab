@@ -56,9 +56,12 @@
     - {src: killswitch.sh.j2, dest: /usr/local/bin/qbittorrent-killswitch.sh}
     - {src: wg-watchdog.sh.j2, dest: /usr/local/bin/wg-watchdog.sh}
     - {src: wg-reresolve.sh.j2, dest: /usr/local/bin/wg-reresolve.sh}
+    - {src: apt-route.sh.j2, dest: /usr/local/bin/qbittorrent-apt-route.sh}
   loop_control:
     label: "{{ item.dest }}"
-  notify: Reload the kill switch
+  notify:
+    - Reload the kill switch
+    - Reorder the apt route
 
 - name: Install the tunnel health endpoint
   ansible.builtin.template:
@@ -78,6 +81,7 @@
     mode: "0644"
   loop:
     - qbittorrent-killswitch.service
+    - qbittorrent-apt-route.service
     - vpn-health.service
     - wg-reresolve.service
     - wg-reresolve.timer
@@ -86,6 +90,7 @@
     - qbittorrent.service
   notify:
     - Reload the kill switch
+    - Reorder the apt route
     - Restart qbittorrent
 
 - name: Create the qBittorrent account
@@ -174,6 +179,7 @@
   loop:
     - qbittorrent-killswitch
     - "wg-quick@{{ qbittorrent_wg_interface }}"
+    - qbittorrent-apt-route
     - vpn-health
 
 - name: Enable the timers

@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Route apt around the tunnel, ahead of wg-quick's rules
+# After the tunnel, because wg-quick's rules have to exist before they can be
+# put in order. PartOf carries a restart of the tunnel through to this unit, and
+# WantedBy below carries a start, so the order is restored every time wg-quick
+# re-adds its rules.
+After=wg-quick@{{ qbittorrent_wg_interface }}.service
+PartOf=wg-quick@{{ qbittorrent_wg_interface }}.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/local/bin/qbittorrent-apt-route.sh
+
+[Install]
+WantedBy=wg-quick@{{ qbittorrent_wg_interface }}.service

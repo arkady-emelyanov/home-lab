@@ -48,8 +48,8 @@ qbittorrent_lan: 192.168.0.0/24
 # tunnel, so anything that has to work while the tunnel is down resolves here
 # instead: the endpoint re-resolver, and apt.
 qbittorrent_lan_resolver: 192.168.0.40
-# The route rule that keeps apt off the tunnel. It has to sort before wg-quick's
-# own, which it places at 32764 and 32765.
+# The route rule that keeps apt off the tunnel. wg-quick's own two rules are
+# moved to the two priorities after it, so this is the first of three.
 qbittorrent_apt_rule_priority: 1000
 # Allowed to anywhere rather than to the endpoint's address, because that
 # address rotates. Apart from package downloads, the handshake is the only

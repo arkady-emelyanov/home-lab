@@ -11,6 +11,12 @@
     state: restarted
     daemon_reload: true
 
+- name: Reorder the apt route
+  ansible.builtin.systemd_service:
+    name: qbittorrent-apt-route
+    state: restarted
+    daemon_reload: true
+
 - name: Restart vpn-health
   ansible.builtin.systemd_service:
     name: vpn-health

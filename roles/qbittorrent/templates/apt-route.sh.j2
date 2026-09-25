@@ -1,0 +1,33 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Managed by Ansible (roles/qbittorrent). Edits here are overwritten.
+#
+# Puts apt's route rule ahead of the two that wg-quick adds to push everything
+# into the tunnel, with every priority stated rather than inherited.
+#
+# wg-quick gives its rules no priority, so the kernel places each just below the
+# lowest rule already present. That makes the order depend on which came first:
+# a tunnel brought up before apt's rule existed sorts after it, and one restarted
+# afterwards -- by the watchdog, or a reboot -- sorts ahead of it and captures
+# apt's traffic. Pinning all three here, after every start of the tunnel, makes
+# the order the same however it got there.
+#
+# wg-quick takes its rules down by match, not by priority, so moving them does
+# not stop it cleaning up after itself.
+set -eu
+
+IFACE="{{ qbittorrent_wg_interface }}"
+PRIO={{ qbittorrent_apt_rule_priority }}
+APT_UID=$(id -u _apt)
+
+# wg-quick marks its own packets and routes by a table of the same number.
+MARK=$(wg show "$IFACE" fwmark)
+TABLE=$(printf '%d' "$MARK")
+
+while ip -4 rule del uidrange "$APT_UID-$APT_UID" lookup main 2>/dev/null; do :; done
+while ip -4 rule del table main suppress_prefixlength 0 2>/dev/null; do :; done
+while ip -4 rule del not fwmark "$MARK" table "$TABLE" 2>/dev/null; do :; done
+
+ip -4 rule add priority "$PRIO" uidrange "$APT_UID-$APT_UID" lookup main
+ip -4 rule add priority $((PRIO + 1)) table main suppress_prefixlength 0
+ip -4 rule add priority $((PRIO + 2)) not fwmark "$MARK" table "$TABLE"
