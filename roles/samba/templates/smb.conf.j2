@@ -40,6 +40,12 @@
    wide links = no
    unix extensions = no
 
+   # Browsers download into a dotfile and rename it when done. With the default
+   # "hide dot files = yes" the temp file is created with the DOS hidden bit,
+   # stored in user.DOSATTRIB, and the bit survives the rename -- so the
+   # finished download stays hidden. Linux clients hide dotfiles by name anyway.
+   hide dot files = no
+
    log file = /var/log/samba/log.%m
    max log size = 1000
    logging = file
