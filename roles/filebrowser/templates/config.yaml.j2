@@ -1,0 +1,37 @@
+# {{ ansible_managed }}
+#
+# The layout of v1.5.x, where everything but auth sits under server. Upstream's
+# main branch has since moved the listener to an http section and made database
+# a map -- neither is understood by this version, which refuses to start.
+server:
+  port: {{ filebrowser_port }}
+  baseURL: "/"
+  externalUrl: "https://{{ filebrowser_domain }}"
+  database: {{ filebrowser_state_dir }}/filebrowser.db
+  cacheDir: {{ filebrowser_cache_dir }}
+  # Versions are pinned in this repository; a banner saying otherwise is noise.
+  disableUpdateCheck: true
+  # Nothing here mounts it, and a second protocol is a second way in.
+  disableWebDAV: true
+  sources:
+    - path: {{ filebrowser_source_path }}
+      name: {{ filebrowser_source_name }}
+      config:
+        # The bind mount is already read-only at the kernel. This makes the
+        # interface say so, instead of offering buttons that fail.
+        readOnly: true
+        rules:
+          # Dotfiles are neither listed nor shareable: Samba's .recycle is here,
+          # and a deleted file should not come back as a link.
+          - folderPath: "/"
+            ignoreHidden: true
+
+auth:
+  adminUsername: {{ filebrowser_admin_username }}
+  # adminPassword comes from the environment file, so this file carries no
+  # secret. The JWT key is left unset: FileBrowser generates one and keeps it in
+  # its database, which is arbitrary state nobody needs to know.
+  methods:
+    password:
+      enabled: true
+      signup: false

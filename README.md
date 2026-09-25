@@ -12,7 +12,7 @@ make host      # converge the hypervisor
 make tenants   # create and configure the containers
 ```
 
-`make tenants TENANT=nas` limits a run to one tenant.
+`make tenants TENANT=samba` limits a run to one tenant.
 
 Both converges ask for the database passphrase once, and read every secret from it directly. Nothing is written to disk.
 
@@ -52,7 +52,7 @@ An Intel N100 board in a micro-ATX case: four 2.5G NICs, seven SATA ports, one S
 
 ## What runs where
 
-Tenants are unprivileged containers on DHCP with reserved addresses. Five names answer on port 80 through the proxy; the rest are reached on their own ports.
+Tenants are unprivileged containers on DHCP with reserved addresses. Six names answer on port 80 through the proxy; the rest are reached on their own ports.
 
 | tenant | address | reached as |
 |---|---|---|
@@ -66,10 +66,11 @@ Tenants are unprivileged containers on DHCP with reserved addresses. Five names 
 | proxy | .47 | the names above |
 | miniflux | .48 | `rss.home`, `rss.` on the public domain |
 | gatus | .49 | `health.home` |
+| filebrowser | .50 | `documents.home`; share links only at `secure-share.` on the public domain |
 
 Public names reach this house two different ways.
 
-The apex, `photos.` and `rss.` go through **Cloudflare tunnels**, which dial out — no port is forwarded and the addresses stay hidden behind Cloudflare's.
+The apex, `photos.`, `rss.` and `secure-share.` go through **Cloudflare tunnels**, which dial out — no port is forwarded and the addresses stay hidden behind Cloudflare's.
 
 `tv.` does not. Cloudflare's terms restrict proxying video, and every other name depends on that account, so Jellyfin is served **directly**: a DNS-only record, 443 forwarded to the proxy, and a Let's Encrypt certificate issued over DNS-01.
 
@@ -98,6 +99,7 @@ roles/
   proxy                  every LAN name on port 80, and tv. on 443
   wireguard              the way back onto the LAN from outside
   gatus                  health checks, at health.home
+  filebrowser            documents in a browser, and share links out
 lookup_plugins/
   keepass.py             reads secrets from the database at converge time
 scripts/
@@ -113,13 +115,13 @@ scripts/
 
 Credentials live in a KeePassXC database — `keepass_db` in `inventory/group_vars/all.yml`. Roles read them during a converge; nothing is written to disk, and nothing in this repository names anything but an entry.
 
-The database also holds three things that are not credentials but identify this installation, under the **`identity`** group: `domain`, `email` and `mail-to`. They are there so the repository can be published. A domain resolves to this house's address, and this repository describes exactly what is listening at it and on which ports — committing the two together is the disclosure, not either alone. Roles derive their public names from `public_domain` rather than naming a zone, so the three Cloudflare tunnel ids are held the same way.
+The database also holds three things that are not credentials but identify this installation, under the **`identity`** group: `domain`, `email` and `mail-to`. They are there so the repository can be published. A domain resolves to this house's address, and this repository describes exactly what is listening at it and on which ports — committing the two together is the disclosure, not either alone. Roles derive their public names from `public_domain` rather than naming a zone, so the four Cloudflare tunnel ids are held the same way.
 
 ### Adding one
 
 ```sh
 ./scripts/secret add jellyfin/api-key            # type the value, twice
-./scripts/secret add wireguard/wg0.conf --file wg0.conf  # store a file
+./scripts/secret add wireguard/wg0.conf wg0.conf    # store a file
 ./scripts/secret list jellyfin
 ./scripts/secret rm jellyfin/api-key
 ```

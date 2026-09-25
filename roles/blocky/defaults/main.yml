@@ -71,6 +71,7 @@ blocky_custom_dns:
   qbittorrent.home: 192.168.0.47
   photos.home: 192.168.0.47
   rss.home: 192.168.0.47
+  documents.home: 192.168.0.47
   health.home: 192.168.0.47
   proxy.home: 192.168.0.47
   blocky.home: 192.168.0.40

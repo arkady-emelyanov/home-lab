@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+[Unit]
+Description=FileBrowser Quantum over {{ filebrowser_source_path }}
+Documentation=https://github.com/gtsteffaniak/filebrowser
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=filebrowser
+Group=filebrowser
+# Holds FILEBROWSER_ADMIN_PASSWORD.
+EnvironmentFile=/etc/filebrowser/env
+ExecStart=/usr/local/bin/filebrowser -c /etc/filebrowser/config.yaml
+WorkingDirectory={{ filebrowser_state_dir }}
+StateDirectory=filebrowser
+CacheDirectory=filebrowser
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

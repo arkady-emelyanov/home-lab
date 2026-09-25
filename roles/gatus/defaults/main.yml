@@ -65,12 +65,21 @@ gatus_endpoints:
     url: "http://192.168.0.43:8080/api/v2/transfer/info"
     conditions:
       - "[STATUS] == 200"
-      - "[BODY].connection_status == connected"
+      # firewalled is healthy here, not a warning: the provider forwards no
+      # port, so the client is unreachable from outside by design and reports
+      # firewalled until a peer happens to connect in. Only disconnected -- no
+      # network at all -- is a failure.
+      - "[BODY].connection_status != disconnected"
       # Low deliberately. The count swings with how busy the swarm is -- 218
       # one hour, 80 the next -- so a threshold near the usual value alarms on
       # quiet nights rather than on failures. Zero means no peer connectivity
       # at all; anything above a handful means the DHT is working.
       - "[BODY].dht_nodes > 10"
+
+  - name: filebrowser
+    group: tenants
+    url: "http://192.168.0.50:8080/health"
+    conditions: ["[STATUS] == 200"]
 
   - name: proxy
     group: tenants
@@ -125,7 +134,7 @@ gatus_endpoints:
   - name: "{{ public_domain }}"
     group: public
     url: "https://{{ public_domain }}/"
-    conditions: ["[STATUS] == 418", "[CERTIFICATE_EXPIRATION] > 240h"]
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
 
   - name: "photos.{{ public_domain }}"
     group: public
@@ -136,6 +145,21 @@ gatus_endpoints:
     group: public
     url: "https://rss.{{ public_domain }}/healthcheck"
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "secure-share.{{ public_domain }}"
+    group: public
+    # The share API's own health route, which is under /public/ and so the one
+    # path the tunnel forwards.
+    url: "https://secure-share.{{ public_domain }}/public/api/health"
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "secure-share.{{ public_domain }} login"
+    group: public
+    # The other half, and the one that matters: the login page must NOT be
+    # reachable from outside. A 200 here means the tunnel's path rule is gone
+    # and the whole file browser is on the internet.
+    url: "https://secure-share.{{ public_domain }}/"
+    conditions: ["[STATUS] == 404"]
 
   - name: "tv.{{ public_domain }}"
     group: public

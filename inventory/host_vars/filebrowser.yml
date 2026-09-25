@@ -1,0 +1,20 @@
+---
+# FileBrowser: the documents share in a browser, and the one way to hand a file
+# from it to someone outside the house.
+lxc_vmid: 120
+lxc_mac: "BC:24:11:00:00:78"
+
+lxc_hostname: filebrowser
+
+# One Go binary, an SQLite database and a search index of one dataset.
+lxc_cores: 1
+lxc_memory: 1024
+lxc_disk: 8
+
+# Read-only, twice over: here at the kernel, and in FileBrowser's own source
+# config. samba is the only tenant that writes documents -- a bind mount has no
+# cross-container locking -- so this one reads it and nothing more. A leaked
+# share link can then be used to download what it names, and never to upload,
+# rename or delete.
+lxc_mounts:
+  - {host: /mnt/tank/share/documents, path: /srv/documents, ro: true}

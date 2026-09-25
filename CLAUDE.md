@@ -7,7 +7,7 @@ Ansible manages a Proxmox VE host and the LXC containers on it.
 ```sh
 make check     # ansible-lint, then access and readiness; changes nothing
 make host      # converge the hypervisor
-make tenants   # create and configure containers  (TENANT=nas to limit)
+make tenants   # create and configure containers  (TENANT=samba to limit)
 ```
 
 Do not hand-assemble `ansible-playbook` invocations; use the targets.
@@ -83,4 +83,4 @@ The share tree is owned `65534:65534`, mode `0775`/`0664`, and every tenant maps
 
 Datasets are `lz4`, which buys little on already-compressed media -- do not promise space savings from compression here. `recordsize` is a **maximum**, not a fixed block size: a 4K file in a 1M dataset occupies one small block.
 
-Tenants may share a mount, and two do — `movies`, `shows`, `drone` and `photos` are held by both `nas` and `jellyfin`. A bind mount has no exclusivity. Two consequences: access mode is per tenant, so a film deletable through Jellyfin may be read-only over SMB; and there is no cross-container locking, which is why `documents` is mounted by `nas` alone.
+Tenants may share a mount, and two do — `movies`, `shows`, `drone` and `photos` are held by both `samba` and `jellyfin`. A bind mount has no exclusivity. Two consequences: access mode is per tenant, so a film deletable through Jellyfin may be read-only over SMB; and there is no cross-container locking, which is why `documents` is written by `samba` alone -- `filebrowser` mounts it read-only.

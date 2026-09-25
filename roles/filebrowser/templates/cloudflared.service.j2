@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Cloudflare tunnel for {{ filebrowser_domain }}
+After=network-online.target filebrowser.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/cloudflared --config /etc/cloudflared/config.yml --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+User=cloudflared
+Group=cloudflared
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

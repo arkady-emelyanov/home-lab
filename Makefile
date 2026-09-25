@@ -7,7 +7,7 @@ SHELL := /bin/sh
 PYENV_ROOT ?= $(shell pyenv root 2>/dev/null || echo $$HOME/.pyenv)
 BIN        := $(PYENV_ROOT)/versions/$(shell cat .python-version)/bin
 
-# Limit a run to one tenant:  make tenants TENANT=nas
+# Limit a run to one tenant:  make tenants TENANT=samba
 TENANT ?=
 LIMIT  := $(if $(TENANT),--limit $(TENANT),)
 

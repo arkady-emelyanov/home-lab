@@ -134,3 +134,15 @@
     - role: lxc
     - role: tenant_ssh
     - role: gatus
+
+- name: FileBrowser over the documents share
+  hosts: filebrowser
+  gather_facts: false
+  pre_tasks:
+    - name: Skip filebrowser when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: filebrowser

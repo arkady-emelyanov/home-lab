@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+tunnel: {{ filebrowser_tunnel_id }}
+credentials-file: /etc/cloudflared/credentials.json
+
+# Only share links. /public/ is the share page, its assets and its API; the
+# login page, the file browser and the admin API are all outside it, so they
+# fall through to the 404 below and never leave the house.
+ingress:
+  - hostname: {{ filebrowser_domain }}
+    path: ^/public/
+    service: http://127.0.0.1:{{ filebrowser_port }}
+  - service: http_status:404
