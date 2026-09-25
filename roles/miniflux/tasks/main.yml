@@ -92,6 +92,7 @@
     url: >-
       https://github.com/cloudflare/cloudflared/releases/download/{{ miniflux_cloudflared_version }}/cloudflared-linux-amd64
     dest: /usr/local/bin/cloudflared
+    checksum: "sha256:{{ miniflux_cloudflared_sha256 }}"
     owner: root
     group: root
     mode: "0755"

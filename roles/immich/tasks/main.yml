@@ -112,6 +112,7 @@
     url: >-
       https://github.com/cloudflare/cloudflared/releases/download/{{ immich_cloudflared_version }}/cloudflared-linux-amd64
     dest: /usr/local/bin/cloudflared
+    checksum: "sha256:{{ immich_cloudflared_sha256 }}"
     owner: root
     group: root
     mode: "0755"

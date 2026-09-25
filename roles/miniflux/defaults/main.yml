@@ -38,5 +38,9 @@ miniflux_domain: "rss.{{ public_domain }}"
 miniflux_tunnel_id: "{{ lookup('keepass', miniflux_tunnel_id_entry) }}"
 miniflux_tunnel_id_entry: miniflux/tunnel-id
 miniflux_tunnel_credentials_entry: miniflux/tunnel-credentials.json
-miniflux_cloudflared_version: "2026.9.1"
+miniflux_cloudflared_version: "2026.9.3"
+# The digest GitHub publishes for the release asset. It is also what makes a
+# version bump take effect: without a checksum get_url keeps any file already
+# at the destination.
+miniflux_cloudflared_sha256: "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2"
 miniflux_cf_token_entry: cloudflare/token.txt

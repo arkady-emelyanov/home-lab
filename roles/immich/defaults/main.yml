@@ -50,6 +50,10 @@ immich_domain: "photos.{{ public_domain }}"
 immich_tunnel_id: "{{ lookup('keepass', immich_tunnel_id_entry) }}"
 immich_tunnel_id_entry: immich/tunnel-id
 immich_tunnel_credentials_entry: immich/tunnel-credentials.json
-immich_cloudflared_version: "2026.9.1"
+immich_cloudflared_version: "2026.9.3"
+# The digest GitHub publishes for the release asset. It is also what makes a
+# version bump take effect: without a checksum get_url keeps any file already
+# at the destination.
+immich_cloudflared_sha256: "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2"
 
 immich_cf_token_entry: cloudflare/token.txt
