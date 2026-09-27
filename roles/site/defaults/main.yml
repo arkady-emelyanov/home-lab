@@ -10,6 +10,11 @@
 
 site_domain: "{{ public_domain }}"
 
+# The links under the name. Public profiles, and the repository already lives
+# under the first, so they say nothing the repository does not.
+site_github_url: https://github.com/arkady-emelyanov/
+site_linkedin_url: https://www.linkedin.com/in/arkadii-emelianov/
+
 # Locally managed, not token-managed. A tunnel run with --token takes its
 # configuration from the Cloudflare dashboard and ignores config.yml, which
 # would put the ingress rules somewhere this repository cannot describe. With a
@@ -35,6 +40,47 @@ site_nginx_address: 127.0.0.1
 site_nginx_port: 8080
 
 site_root: /var/www/site
+
+# The Earth scene's satellites: a timer on the container fetches CelesTrak's
+# orbital elements and writes what the page needs to one file it serves. CelesTrak
+# refreshes every two hours and asks not to be asked more often, so the timer runs
+# at that pace and a group fetched less than two hours ago is not fetched again --
+# which also keeps a converge right after a timer run off the network.
+site_satellites_user: site-satellites
+site_satellites_state: /var/lib/site-satellites
+site_satellites_script: /usr/local/libexec/site-satellites.py
+site_satellites_output: "{{ site_root }}/data/sats.json"
+site_satellites_interval: 2h
+site_satellites_refetch_after: 6600
+# [group, kind]: the kind is how the page colours it -- 0 Starlink, 1 the other
+# broadband constellations, 2 navigation, 3 geostationary, 4 space stations, 5 the
+# rest. A satellite in several groups takes its first, so the specific ones lead.
+site_satellites_groups:
+  - [stations, 4]
+  - [gnss, 2]
+  - [starlink, 0]
+  - [oneweb, 1]
+  - [kuiper, 1]
+  - [qianfan, 1]
+  - [geo, 3]
+  - [intelsat, 3]
+  - [ses, 3]
+  - [weather, 5]
+  - [goes, 5]
+  - [science, 5]
+  - [resource, 5]
+  - [sarsat, 5]
+  - [iridium-NEXT, 5]
+  - [globalstar, 5]
+  - [orbcomm, 5]
+  - [planet, 5]
+  - [spire, 5]
+  - [amateur, 5]
+  - [cubesat, 5]
+  - [education, 5]
+  - [military, 5]
+  - [radar, 5]
+  - [other-comm, 5]
 
 # The DNS record is created from the machine running Ansible, not from the
 # container. A public-facing tenant has no business holding a token that can

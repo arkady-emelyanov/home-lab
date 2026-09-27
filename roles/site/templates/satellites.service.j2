@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the satellites for the site's Earth scene
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ site_satellites_user }}
+Group={{ site_satellites_user }}
+ExecStart=/usr/bin/python3 {{ site_satellites_script }}
+# Its own state directory for the copies it keeps, and the one data directory in
+# the document root; nothing else on the system is writable to it.
+StateDirectory={{ site_satellites_state | basename }}
+ReadWritePaths={{ site_satellites_output | dirname }}
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

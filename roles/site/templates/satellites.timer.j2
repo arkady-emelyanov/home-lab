@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the site's satellites as often as CelesTrak does
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ site_satellites_interval }}
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

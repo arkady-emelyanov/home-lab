@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+"""Keep the Earth scene's satellites current.
+
+Fetches CelesTrak's orbital elements for each group below, keeps the last good copy
+of every group, and writes the orbits the page needs to one file in the document
+root. CelesTrak refreshes its data every two hours and asks that no group be
+downloaded again before then -- a repeat is answered with a notice, not data -- so
+a group fetched less than two hours ago is not asked for again, and a notice keeps
+the copy already held. The page's file is replaced whole, never written in place.
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+import urllib.request
+from datetime import datetime, timezone
+
+URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP={}&FORMAT=json"
+CACHE = os.environ.get("STATE_DIRECTORY", "{{ site_satellites_state }}")
+OUT = "{{ site_satellites_output }}"
+FRESH = {{ site_satellites_refetch_after }}          # seconds before a group is asked for again
+
+# group -> kind; the page colours each kind. Earlier groups win when a satellite is
+# in several, so the specific ones come first.
+GROUPS = {{ site_satellites_groups | to_json }}
+
+
+def fetch(group):
+    """The group's elements as a list, or None when CelesTrak sends a notice instead."""
+    req = urllib.request.Request(URL.format(group), headers={"User-Agent": "{{ site_domain }} satellites"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        body = resp.read()
+    try:
+        data = json.loads(body)
+    except ValueError:
+        print(f"{group}: {body[:80].decode(errors='replace').strip()!r}")
+        return None
+    return data if isinstance(data, list) else None
+
+
+def write_atomic(path, text, mode):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def main():
+    now = time.time()
+    fetched = kept = 0
+    for group, _ in GROUPS:
+        path = os.path.join(CACHE, group + ".json")
+        if os.path.exists(path) and now - os.path.getmtime(path) < FRESH:
+            continue
+        try:
+            data = fetch(group)
+        except OSError as e:
+            print(f"{group}: {e}")
+            data = None
+        if data:
+            write_atomic(path, json.dumps(data), 0o644)
+            fetched += 1
+        else:
+            kept += 1
+        time.sleep(1)
+
+    seen, rows = set(), []
+    for group, kind in GROUPS:
+        path = os.path.join(CACHE, group + ".json")
+        if not os.path.exists(path):
+            continue
+        for s in json.load(open(path)):
+            key = s.get("NORAD_CAT_ID")
+            if key in seen:
+                continue
+            seen.add(key)
+            epoch = datetime.fromisoformat(s["EPOCH"]).replace(tzinfo=timezone.utc).timestamp()
+            rows.append([round(epoch), s["MEAN_MOTION"], s["ECCENTRICITY"], s["INCLINATION"],
+                         s["RA_OF_ASC_NODE"], s["ARG_OF_PERICENTER"], s["MEAN_ANOMALY"], kind])
+    if not rows:
+        print("no satellites held for any group; leaving the page's file as it is")
+        return 1
+    write_atomic(OUT, json.dumps({"SATS": rows, "SATS_AT": datetime.now(timezone.utc).isoformat(timespec="seconds")},
+                                 separators=(",", ":")), 0o644)
+    print(f"{len(rows)} satellites written; {fetched} groups fetched, {kept} kept from before")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

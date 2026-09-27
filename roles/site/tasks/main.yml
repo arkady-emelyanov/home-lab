@@ -70,6 +70,73 @@
     group: root
     mode: "0644"
 
+- name: Install the scenes and the engine that draws them
+  # Static files, like the page: nginx serves them straight off the disk.
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ site_root }}/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  loop:
+    - engine.js
+    - scenes
+
+- name: Create the satellites account
+  # No shell and no home: it runs one script on a timer.
+  ansible.builtin.user:
+    name: "{{ site_satellites_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create the data directory
+  # The one place in the document root the job may write.
+  ansible.builtin.file:
+    path: "{{ site_satellites_output | dirname }}"
+    state: directory
+    owner: "{{ site_satellites_user }}"
+    group: "{{ site_satellites_user }}"
+    mode: "0755"
+
+- name: Install the satellites job
+  ansible.builtin.template:
+    src: satellites.py.j2
+    dest: "{{ site_satellites_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the satellites units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/site-{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - satellites.service
+    - satellites.timer
+
+- name: Refresh the satellites now
+  # Run once during the converge, through the unit and so as its account and in
+  # its sandbox, rather than waiting for the timer: a job that cannot reach
+  # CelesTrak or write its file fails here, where someone is watching. Groups
+  # fetched in the last two hours are not asked for again, so this does not
+  # count against CelesTrak's limit.
+  ansible.builtin.systemd_service:
+    name: site-satellites.service
+    state: started
+    daemon_reload: true
+  changed_when: false
+
+- name: Enable the satellites timer
+  ansible.builtin.systemd_service:
+    name: site-satellites.timer
+    state: started
+    enabled: true
+
 - name: Install the favicon
   # A static file: nginx serves it straight off the disk, so there is nothing
   # to reload when it changes.
