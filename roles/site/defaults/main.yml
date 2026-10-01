@@ -41,6 +41,12 @@ site_nginx_port: 8080
 
 site_root: /var/www/site
 
+# The projects page: a subdomain served by the same nginx through the same tunnel.
+# Built on the control machine from files/projects/ -- Markdown in, one static page
+# out -- so nothing on this tenant needs Python or the Markdown package.
+site_projects_domain: "projects.{{ site_domain }}"
+site_projects_root: /var/www/projects
+
 # The Earth scene's satellites: a timer on the container fetches CelesTrak's
 # orbital elements and writes what the page needs to one file it serves. CelesTrak
 # refreshes every two hours and asks not to be asked more often, so the timer runs

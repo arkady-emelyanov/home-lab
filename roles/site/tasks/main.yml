@@ -59,6 +59,7 @@
     owner: root
     group: root
     mode: "0755"
+  tags: content
 
 - name: Install the page
   # A static file, like the favicon: nginx reads it off the disk on every
@@ -69,6 +70,7 @@
     owner: root
     group: root
     mode: "0644"
+  tags: content
 
 - name: Install the scenes and the engine that draws them
   # Static files, like the page: nginx serves them straight off the disk.
@@ -82,6 +84,7 @@
   loop:
     - engine.js
     - scenes
+  tags: content
 
 - name: Create the satellites account
   # No shell and no home: it runs one script on a timer.
@@ -146,6 +149,88 @@
     owner: root
     group: root
     mode: "0644"
+  tags: content
+
+- name: Build and install the projects page
+  tags: content
+  block:
+    - name: Make a place to build the projects page
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .projects
+      delegate_to: localhost
+      register: site_projects_build
+      changed_when: false
+
+    - name: Build the projects page
+      # On the control machine, with this repository's own interpreter: Markdown
+      # is in its virtualenv and has no business on a public-facing tenant. The
+      # links are passed in, so the sources name no domain.
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ role_path }}/files/projects/build.py"
+          - "{{ site_projects_build.path }}/out"
+          - --home
+          - "https://{{ site_domain }}/"
+          - --projects
+          - "https://{{ site_projects_domain }}/"
+          - --github
+          - "{{ site_github_url }}"
+          - --linkedin
+          - "{{ site_linkedin_url }}"
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Create the projects document root
+      ansible.builtin.file:
+        path: "{{ site_projects_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the projects page
+      # Static files, like the front page. copy compares checksums, so an
+      # unchanged build reports no change; it does not remove files the build
+      # stopped producing.
+      ansible.builtin.copy:
+        src: "{{ site_projects_build.path }}/out/"
+        dest: "{{ site_projects_root }}/"
+        owner: root
+        group: root
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Install llms.txt on the front page too
+      # Built with the projects page, since it lists them, and served from both
+      # names so an agent that lands on either finds it.
+      ansible.builtin.copy:
+        src: "{{ site_projects_build.path }}/out/llms.txt"
+        dest: "{{ site_root }}/llms.txt"
+        owner: root
+        group: root
+        mode: "0644"
+  always:
+    - name: Remove the build directory
+      ansible.builtin.file:
+        path: "{{ site_projects_build.path }}"
+        state: absent
+      delegate_to: localhost
+      changed_when: false
+      when: site_projects_build.path is defined
+
+- name: Install robots.txt on both sites
+  ansible.builtin.template:
+    src: robots.txt.j2
+    dest: "{{ item }}/robots.txt"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ site_root }}"
+    - "{{ site_projects_root }}"
+  tags: content
 
 - name: Remove the default nginx site
   ansible.builtin.file:
@@ -239,4 +324,5 @@
   loop:
     - "{{ site_domain }}"
     - "www.{{ site_domain }}"
+    - "{{ site_projects_domain }}"
   no_log: true

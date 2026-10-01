@@ -148,10 +148,14 @@
   delay: "{{ lxc_address_delay }}"
   changed_when: false
   check_mode: false
+  # Every run needs the address, a tagged one included -- without it Ansible
+  # connects to the inventory name, which resolves to nothing.
+  tags: always
 
 - name: Connect to the address it was given
   ansible.builtin.set_fact:
     ansible_host: "{{ lxc_address.stdout | regex_search('inet ([0-9.]+)', '\\1') | first }}"
+  tags: always
 
 # Host key checking stays on, but a container we just built here is a special
 # case: its key is generated during the create above, so there is nothing to

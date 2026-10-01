@@ -17,3 +17,7 @@ ansible-lint~=25.0
 # dependency that stops being one takes the script with it silently.
 cryptography
 pyyaml
+
+# Renders the projects page from roles/site/files/projects/ on the control machine;
+# the essences are Markdown.
+markdown~=3.5

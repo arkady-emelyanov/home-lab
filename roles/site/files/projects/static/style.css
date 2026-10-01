@@ -1,0 +1,125 @@
+/* The front page's type: one light ink at a few strengths, thin system sans,
+   wide-tracked labels. Behind it, deep space: a near-black indigo, a faint glow
+   from above, and a repeating field of fine stars. */
+
+:root {
+  --bg: #04030c;
+  --fg: rgba(236, 240, 255, 0.88);
+  --dim: rgba(236, 240, 255, 0.56);
+  --faint: rgba(236, 240, 255, 0.32);
+  --rule: rgba(236, 240, 255, 0.10);
+  --air: #a99cff;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0; color: var(--fg);   /* no background: it would paint over the sky */
+  font: 300 15px/1.8 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+::selection { background: rgba(169, 156, 255, 0.3); }
+
+/* fixed, so the text drifts across the sky rather than the sky scrolling away */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    url("stars.webp") 0 0 / 1024px 1024px repeat,
+    radial-gradient(ellipse 70% 45% at 62% -8%, rgba(112, 72, 232, .14), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 0% 100%, rgba(40, 70, 160, .10), transparent 70%),
+    var(--bg);
+}
+
+.head, main {
+  width: min(100% - 40px, 680px);
+  margin-left: max(20px, 14vw);
+}
+
+.head { padding: 5vh 0 5vh; }
+.head h1 { margin: 0; font-size: 15px; font-weight: 300; letter-spacing: .24em; text-transform: uppercase; }
+.intro p { margin: 14px 0 0; color: var(--dim); font-size: 18px; line-height: 1.5; }
+
+.head .name { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.links { display: flex; gap: 12px; }
+.links a { color: var(--faint); line-height: 0; transition: color .3s ease; }
+.links a:hover, .links a:focus-visible { color: var(--dim); outline: none; }
+.links svg { width: 15px; height: 15px; fill: currentColor; }
+
+.group { padding-bottom: 52px; }
+.group h2 {
+  display: flex; align-items: baseline; gap: 14px;
+  margin: 0 0 24px; font-weight: 300; color: var(--faint);
+}
+.group .numeral { font: 400 13px var(--mono); letter-spacing: .1em; color: var(--air); }
+.group .name { font-size: 14px; letter-spacing: .24em; text-transform: uppercase; color: var(--dim); }
+
+.item + .item { margin-top: 30px; }
+.item h3 { margin: 0 0 4px; font-size: 17px; font-weight: 400; letter-spacing: .01em; }
+/* a title is a link to the repository: say so before the pointer gets there */
+.item h3 a {
+  text-decoration: underline; text-decoration-color: rgba(169, 156, 255, .35);
+  text-decoration-thickness: 1px; text-underline-offset: 5px;
+  transition: color .3s ease, text-decoration-color .3s ease;
+}
+.item h3 a::after {
+  content: "↗"; display: inline-block; margin-left: 6px;
+  color: var(--air); font-size: 13px; opacity: .7;
+  transition: transform .3s ease, opacity .3s ease;
+}
+.item h3 a:hover, .item h3 a:focus-visible { color: var(--air); text-decoration-color: var(--air); outline: none; }
+.item h3 a:hover::after, .item h3 a:focus-visible::after { opacity: 1; transform: translate(2px, -2px); }
+.essence p { margin: 0; max-width: 36em; color: var(--dim); font-size: 14.5px; }
+/* keycaps, as on a white Magic Keyboard: a pale, nearly flat cap with dark
+   legends, rounded corners, and a thin shadow where it sits in the frame */
+kbd {
+  display: inline-block; min-width: 1.75em; padding: 0 .45em;
+  font: 500 11.5px/1.75 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  text-align: center; color: #1d1d1f;
+  background: linear-gradient(#ffffff, #ececef);
+  border-radius: 5px;
+  box-shadow: 0 1px 0 #b9b9c0, 0 2px 3px rgba(0, 0, 0, .45), inset 0 -1px 0 rgba(0, 0, 0, .06);
+  vertical-align: 1px;
+}
+kbd + kbd { margin-left: 3px; }
+.stack { margin: 10px 0 0; color: var(--faint); font: 400 11px/1.6 var(--mono); letter-spacing: .04em; }
+
+main { padding-bottom: env(safe-area-inset-bottom); }
+
+/* The way back to the front page: the lower half of a dark world hanging from
+   the top edge, its rim lit from below. Hovered, it sinks a little further into
+   view, the rim brightens, and the front page's name appears beneath it. */
+.home {
+  /* under the violet glow the sky already has at 62% across, as its source */
+  position: absolute; top: -104px; left: 62%; z-index: 1;
+  width: 148px; height: 148px; margin-left: -74px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 18%, #07061a 58%, #141036 80%, #2a2168 100%);
+  box-shadow:
+    inset 0 -1px 2px rgba(214, 206, 255, .35),
+    0 1px 6px rgba(169, 156, 255, .16),
+    0 6px 30px rgba(112, 72, 232, .14);
+  transition: transform .5s ease, box-shadow .5s ease;
+}
+.home span {
+  position: absolute; top: calc(100% + 14px); left: 50%; transform: translateX(-50%);
+  white-space: nowrap; color: var(--faint);
+  font-size: 10px; letter-spacing: .24em; text-transform: uppercase;
+  opacity: 0; transition: opacity .5s ease;
+}
+.home:hover, .home:focus-visible {
+  outline: none; transform: translateY(6px);
+  box-shadow:
+    inset 0 -2px 4px rgba(226, 220, 255, .85),
+    0 2px 14px rgba(169, 156, 255, .50),
+    0 12px 70px rgba(112, 72, 232, .45);
+}
+.home:hover span, .home:focus-visible span { opacity: 1; }
+
+@media (max-width: 720px) {
+  .head, main { margin-left: 20px; }
+  /* smaller, and the header starts below it rather than beside it */
+  .home { top: -64px; width: 92px; height: 92px; margin-left: -46px; }
+  .head { padding: 56px 0 4vh; }
+}

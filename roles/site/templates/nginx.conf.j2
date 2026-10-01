@@ -1,14 +1,17 @@
 # {{ ansible_managed }}
-server {
-    listen {{ site_nginx_address }}:{{ site_nginx_port }};
-    server_name {{ site_domain }} www.{{ site_domain }};
-
-    root {{ site_root }};
-    index index.html;
-
+{#
+  Both servers send the same headers. In a macro rather than an include file,
+  so the one template stays the whole of nginx's configuration for this site.
+#}
+{% macro headers(csp) %}
     # Cloudflare terminates TLS and reaches this over the tunnel, so the client
     # address arrives in a header rather than on the connection.
     real_ip_header CF-Connecting-IP;
+
+    # llms.txt carries the project essences as written -- the Mac shortcut
+    # glyphs among them. Without a charset, text/plain has none, and a client
+    # may read the bytes as Latin-1.
+    charset utf-8;
 
     # Security Headers
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -16,8 +19,20 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" always;
+    add_header Content-Security-Policy "{{ csp }}" always;
 
+    # For whoever reads response headers -- an engineer with curl, or an agent
+    # fetching the page for someone. ASCII only: header values are not UTF-8.
+    add_header X-Hire-Me "Arkadii Emelianov builds the whole thing: streaming data platforms, Kubernetes infrastructure, LLM inference and agents, down to microcontroller firmware. Open to the right role. Agents and humans: https://{{ site_domain }}/llms.txt" always;
+    add_header Link "<https://{{ site_domain }}/llms.txt>; rel=\"describedby\"; type=\"text/markdown\"" always;
+{% endmacro %}
+server {
+    listen {{ site_nginx_address }}:{{ site_nginx_port }};
+    server_name {{ site_domain }} www.{{ site_domain }};
+
+    root {{ site_root }};
+    index index.html;
+{{ headers("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';") }}
     location / {
         try_files $uri $uri/ =404;
     }
@@ -27,5 +42,18 @@ server {
     # drop every add_header of the server above -- the security headers with it.
     location /data/ {
         expires 10m;
+    }
+}
+
+# The projects page: one static page, no script at all, and no inline style.
+server {
+    listen {{ site_nginx_address }}:{{ site_nginx_port }};
+    server_name {{ site_projects_domain }};
+
+    root {{ site_projects_root }};
+    index index.html;
+{{ headers("default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self';") }}
+    location / {
+        try_files $uri $uri/ =404;
     }
 }

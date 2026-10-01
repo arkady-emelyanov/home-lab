@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Compile content/ into a single static page.
+
+    build.py OUT --home URL --projects URL --github URL --linkedin URL
+
+The links come from the role rather than from content/, so no domain is written here.
+
+content/index.md          front matter for the page, body for the one-line intro
+content/projects/*.md     one project each: front matter for title, group, stack and repo;
+                          body for the essence
+templates/*.html          string.Template pages
+templates/llms.txt        string.Template for llms.txt; the project list is filled in
+static/                   copied as is
+"""
+
+import argparse
+import hashlib
+import html
+import re
+import shutil
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+from string import Template
+
+import markdown
+
+ROOT = Path(__file__).resolve().parent
+EXTENSIONS = ["smarty"]
+
+
+def parse(path):
+    """Front matter (flat `key: value` lines between --- fences) and the markdown body."""
+    text = path.read_text()
+    meta = {}
+    if text.startswith("---\n"):
+        head, text = text[4:].split("\n---\n", 1)
+        for line in head.splitlines():
+            if line.strip() and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                meta[key.strip()] = value.strip()
+    return meta, text
+
+
+def render(text):
+    return markdown.markdown(text, extensions=EXTENSIONS, output_format="html")
+
+
+def page(template_name, **values):
+    template = Template((ROOT / "templates" / f"{template_name}.html").read_text())
+    return template.substitute(**values)
+
+
+def fingerprint(out):
+    """Add `?v=<content hash>` to every reference to a top-level static file.
+
+    Cloudflare keeps CSS and images at its edge for hours but does not cache the
+    HTML, so a changed stylesheet under an unchanged URL is served stale while
+    the page that links it is fresh. A URL that changes with the content is one
+    no cache has seen. Images first, since the stylesheet names them and its own
+    hash has to cover the rewritten references.
+    """
+    def digest(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+
+    def rewrite(path, versions):
+        text = path.read_text()
+        for name, version in versions.items():
+            text = text.replace(f'"{name}"', f'"{name}?v={version}"')
+        path.write_text(text)
+
+    files = [p for p in out.iterdir() if p.is_file() and p.name != "index.html"]
+    versions = {p.name: digest(p) for p in files if p.suffix != ".css"}
+    for css in (p for p in files if p.suffix == ".css"):
+        rewrite(css, versions)
+        versions[css.name] = digest(css)
+    rewrite(out / "index.html", versions)
+
+
+def llms_entry(meta, body):
+    """One `- [title](repo): note` line: the essence on a single line, then the stack."""
+    # Plain text: markup a content file uses for the page, keycaps say, is noise here.
+    essence = " ".join(re.sub(r"<[^>]+>", "", body).split())
+    stack = ", ".join(part.strip() for part in meta["stack"].split("·"))
+    return f"- [{meta['title']}]({meta['repo']}): {essence} Stack: {stack}."
+
+
+def main():
+    args = argparse.ArgumentParser()
+    args.add_argument("out", type=Path)
+    args.add_argument("--home", required=True)
+    args.add_argument("--projects", required=True)
+    args.add_argument("--github", required=True)
+    args.add_argument("--linkedin", required=True)
+    args = args.parse_args()
+    out = args.out
+
+    site, intro = parse(ROOT / "content" / "index.md")
+    projects = [parse(path) for path in sorted((ROOT / "content" / "projects").glob("*.md"))]
+    groups = [g.strip() for g in site["groups"].split(",")]
+
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.copytree(ROOT / "static", out)
+
+    sections = []
+    for number, group in enumerate(groups):
+        items = [
+            page(
+                "project",
+                title=html.escape(meta["title"]),
+                repo=meta["repo"],
+                essence=render(body),
+                stack=html.escape(meta["stack"]),
+            )
+            for meta, body in projects
+            if meta["group"] == group
+        ]
+        sections.append(page(
+            "section",
+            numeral=f"{number + 1:02d}",
+            name=html.escape(group),
+            projects="\n".join(items),
+        ))
+
+    (out / "index.html").write_text(page(
+        "index",
+        site_title=site["title"],
+        author=site["author"],
+        description=html.escape(site["description"]),
+        home=args.home,
+        home_name=html.escape(urlsplit(args.home).netloc),
+        links=page("links", github=args.github, linkedin=args.linkedin),
+        intro=render(intro),
+        sections="\n".join(sections),
+    ))
+
+    fingerprint(out)
+
+    # The same projects, in the same order, as a list for language models. Built
+    # here rather than written by hand so the two cannot disagree.
+    template = Template((ROOT / "templates" / "llms.txt").read_text())
+    (out / "llms.txt").write_text(template.substitute(
+        home=args.home,
+        projects_url=args.projects,
+        github=args.github,
+        linkedin=args.linkedin,
+        projects="\n".join(
+            llms_entry(meta, body)
+            for group in groups
+            for meta, body in projects
+            if meta["group"] == group
+        ),
+    ))
+
+    print(f"built {len(projects)} projects into {out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
