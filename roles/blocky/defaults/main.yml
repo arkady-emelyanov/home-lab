@@ -144,8 +144,20 @@ blocky_refresh_period: 24h
 blocky_allowlists: {}
 
 # Answers served from memory rather than re-asked upstream.
-blocky_cache_min: 5m
+#
+# No minimum: an answer is kept for the TTL its zone gave it and no longer. A
+# floor here outlives every record that sets a short TTL on purpose -- `home`
+# sets 60 seconds because the address moves. Prefetching re-asks for popular
+# names before they expire, so honouring short TTLs costs no latency.
+blocky_cache_min: 0m
 blocky_cache_max: 30m
 blocky_cache_prefetching: true
+
+# How long "no such record" is remembered. Blocky does not read this from the
+# zone's SOA, and the zone would not help: Cloudflare's says 30 minutes. A name
+# looked up a moment before its record is created then stays missing on the LAN
+# for half an hour while it resolves everywhere else. A minute still absorbs a
+# client hammering a name that does not exist.
+blocky_cache_negative: 1m
 
 blocky_log_level: info
