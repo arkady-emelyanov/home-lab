@@ -28,8 +28,6 @@ pve_mail_to: "{{ admin_mail_to }}"
 # spaces are stripped where it is used, so either form works.
 pve_mail_password_entry: mail/smtp-password.txt
 
-# The units that must not fail quietly. Each gets OnFailure pointing at the
-# template unit below, which mails what happened rather than that something did.
 # At most one mail per unit in this window. cloudflare-ddns runs every five
 # minutes, so an hour of Cloudflare being unreachable is twelve failures and a
 # day is 288 -- all saying the same thing. The first one is the useful one.
@@ -39,16 +37,28 @@ pve_mail_password_entry: mail/smtp-password.txt
 # that survives a restart is worth hearing about again.
 pve_mail_quiet_seconds: 3600
 
+# The units that must not fail quietly. Each gets OnFailure pointing at the
+# notifier, which mails what happened rather than that something did, and
+# OnSuccess pointing at a unit that ends the unit's run of failures.
+#
+# `failures` is how many runs in a row must fail before a mail goes out; it
+# defaults to 1. A unit on a five-minute timer has a next run minutes away, so
+# a single failure there is usually a network blip the next run absorbs. A
+# nightly unit has no such cover: one failed backup is a night with no backup.
 pve_mail_watched_units:
-  - restic-backup.service
+  - unit: restic-backup.service
   # The verification is watched separately from the backup it verifies. A
   # backup that runs cleanly every night and cannot give a file back is the
   # exact failure this pair exists to tell apart, so they must be able to fail
   # independently and say which one did.
-  - restic-verify.service
-  - cloudflare-ddns.service
-  - vzdump-all.service
+  - unit: restic-verify.service
+  # Three runs is fifteen minutes of Cloudflare being unreachable -- long enough
+  # to be past a timeout or a resolver hiccup, short enough that an address
+  # change is not left stale for long.
+  - unit: cloudflare-ddns.service
+    failures: 3
+  - unit: vzdump-all.service
   # An instance drop-in: systemd reads zfs-scrub@tank.service.d for this
   # instance alone, so the packaged template unit is untouched and no other
   # pool would inherit the notification.
-  - "zfs-scrub@{{ pve_storage_pool }}.service"
+  - unit: "zfs-scrub@{{ pve_storage_pool }}.service"

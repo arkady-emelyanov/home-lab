@@ -78,36 +78,44 @@
     group: root
     mode: "0755"
 
-- name: Install the unit that runs it
+- name: Install the units that run it
   ansible.builtin.template:
-    src: "notify-failure@.service.j2"
-    dest: /etc/systemd/system/notify-failure@.service
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - notify-failure@.service
+    - notify-failure-clear@.service
   notify: Reload systemd
 
 - name: Create the drop-in directories
   ansible.builtin.file:
-    path: "/etc/systemd/system/{{ item }}.d"
+    path: "/etc/systemd/system/{{ item.unit }}.d"
     state: directory
     owner: root
     group: root
     mode: "0755"
   loop: "{{ pve_mail_watched_units }}"
+  loop_control:
+    label: "{{ item.unit }}"
 
 - name: Make the watched units report their own failure
   # A drop-in rather than editing each unit: the units are written by their own
   # roles, and this keeps who-gets-watched in one list here.
   ansible.builtin.copy:
-    dest: "/etc/systemd/system/{{ item }}.d/notify.conf"
+    dest: "/etc/systemd/system/{{ item.unit }}.d/notify.conf"
     owner: root
     group: root
     mode: "0644"
     content: |
       [Unit]
       OnFailure=notify-failure@%n.service
+      OnSuccess=notify-failure-clear@%n.service
   loop: "{{ pve_mail_watched_units }}"
+  loop_control:
+    label: "{{ item.unit }}"
   notify: Reload systemd
 
 - name: Start postfix

@@ -4,30 +4,70 @@
 # Mailed when a watched unit fails. Carries the status and the tail of the
 # journal, because "restic-backup failed" without the reason means opening a
 # terminal at the exact moment you are least able to.
+#
+# `notify-failure UNIT` counts a failure; `notify-failure --clear UNIT` is run
+# when the unit succeeds, and ends its run of failures.
 set -eu
+
+clear=false
+if [ "$1" = --clear ]; then
+    clear=true
+    shift
+fi
 unit="$1"
+
+# Kept in /run, so a reboot clears them: a failure that survives a restart is
+# worth hearing about again.
+state=/run/notify-failure
+mkdir -p "$state"
+key="$state/$(printf '%s' "$unit" | tr -c 'A-Za-z0-9._-' '_')"
+count="$key.failures"
+stamp="$key.mailed"
+
+if $clear; then
+    rm -f "$count"
+    exit 0
+fi
+
+# How many runs in a row must fail before anyone hears about it.
+case "$unit" in
+{% for watched in pve_mail_watched_units if watched.failures | default(1) > 1 %}
+    {{ watched.unit }}) threshold={{ watched.failures }} ;;
+{% endfor %}
+    *) threshold=1 ;;
+esac
+
+failures=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))
+echo "$failures" > "$count"
+
+if [ "$failures" -lt "$threshold" ]; then
+    # Journalled rather than silent, so a unit that keeps nearly reaching the
+    # threshold is visible to anyone reading the logs.
+    echo "$unit has failed $failures of $threshold times in a row; not sending" >&2
+    exit 0
+fi
 
 # One mail per unit per window. Without this, a unit on a five-minute timer
 # mails on every run for as long as the problem lasts, and the mail that
 # mattered is buried under 287 copies of itself.
-stamps=/run/notify-failure
-mkdir -p "$stamps"
-stamp="$stamps/$(echo "$unit" | tr -c 'A-Za-z0-9._-' '_')"
-
 if [ -f "$stamp" ]; then
     age=$(( $(date +%s) - $(stat -c %Y "$stamp") ))
     if [ "$age" -lt {{ pve_mail_quiet_seconds }} ]; then
-        # Journalled rather than silent, so the suppression is visible to
-        # anyone reading the logs and wondering why no mail arrived.
         echo "$unit failed again ${age}s after the last mail; not sending" >&2
         exit 0
     fi
 fi
 touch "$stamp"
 
+if [ "$failures" -gt 1 ]; then
+    subject="$unit failed $failures times in a row"
+else
+    subject="$unit failed"
+fi
+
 {
     echo "To: root"
-    echo "Subject: [$(hostname -s)] $unit failed"
+    echo "Subject: [$(hostname -s)] $subject"
     echo
     systemctl status --full --no-pager "$unit" 2>&1 | head -30
     echo

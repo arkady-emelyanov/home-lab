@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Unit]
+Description=End the run of failures of %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/notify-failure --clear %i
