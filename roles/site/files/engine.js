@@ -201,7 +201,7 @@ const V = S.view, FOV = (V.fov || 26) * DEG, OFFSET = V.offset || [0, 0];
 const BASE = mul(rotX(-(Math.PI / 2 - V.el * DEG)), rotZ(-V.az * DEG - Math.PI / 2));
 let W = 0, H = 0, dpr = 1, dist = 10, roll = 0, ppk = 1, P, dirty = true, restYaw = 0;
 function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dpr = Math.min(window.devicePixelRatio || 1, 1.5);   // fill is the cost, and it goes as dpr squared; sprites scale with it, so the look holds
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -265,9 +265,13 @@ gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.clearColor(0, 0, 0, 1);
 const pinned = /^#t=/.test(location.hash) ? parseFloat(location.hash.slice(3)) : null;   // preview aid: freeze the clock
 const t0 = performance.now();
 let simT = 0, lastNow = null;
+// Everything here moves slowly, so 30 frames a second is enough; uncapped, a 120 Hz display
+// would draw four times the frames for nothing. The slack keeps a 60 Hz display at 30, not 20.
+const FRAME_MS = 1000 / 30 - 4;
 
 function frame(now) {
   requestAnimationFrame(frame);
+  if (lastNow !== null && now - lastNow < FRAME_MS) return;
   const real = pinned !== null ? pinned : (now - t0) / 1000;
   const dtReal = lastNow === null ? 0 : Math.min(0.05, (now - lastNow) / 1000); lastNow = now;
   const intro = Math.min(1, real / 3.2), ease = 1 - Math.pow(1 - intro, 3), fade = Math.min(1, real / 1.8);
@@ -275,9 +279,10 @@ function frame(now) {
   if (pinned !== null) simT = pinned * (S.timeScale || 1);
   else simT += dtReal * (S.timeScale || 1) * speed;
 
-  const k = usingMotion ? 0.12 : 0.06;
+  const ease60 = (k) => 1 - Math.pow(1 - k, dtReal * 60);   // easing rates are per 60 Hz frame, whatever the frame rate
+  const k = ease60(usingMotion ? 0.12 : 0.06);
   cx += (tx - cx) * k; cy += (ty - cy) * k;
-  zoom += (zoomT - zoom) * 0.12;
+  zoom += (zoomT - zoom) * ease60(0.12);
   const ppkZ = ppk / zoom;                      // px per unit at the centre, zoom included
 
   if (S.step) {
