@@ -7,9 +7,11 @@ lxc_mac: "BC:24:11:00:00:74"
 lxc_hostname: immich
 
 # Machine learning runs in-process for face and object detection, and the model
-# cache is sizeable, so this tenant is given more memory than the others.
+# cache is sizeable, so this tenant is given more memory than the others. It is
+# sized for a bulk import, when software transcodes and face detection run at
+# once; short of that peak the server thrashes until it stops answering.
 lxc_cores: 4
-lxc_memory: 6144
+lxc_memory: 12288
 # Container-local disk holds the docker images (~4G), the model cache and the
 # Postgres cluster. The library itself is the bind mount below.
 lxc_disk: 32
