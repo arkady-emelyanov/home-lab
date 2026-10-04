@@ -10,7 +10,7 @@
   ansible.builtin.uri:
     url: >-
       https://api.cloudflare.com/client/v4/zones?name={{
-        proxy_public_domain.split('.')[-2:] | join('.') }}
+        public_domain.split('.')[-2:] | join('.') }}
     headers:
       Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
   delegate_to: localhost
@@ -38,9 +38,11 @@
     mode: "0600"
   no_log: true
 
-- name: Obtain the certificate for {{ proxy_public_domain }}
-  # creates: makes this run once. certbot's own timer renews it afterwards;
-  # asking it again here would be a second path to the same thing.
+- name: Obtain a certificate for each public name
+  # creates: makes this run once per name. certbot's own timer renews them
+  # afterwards; asking it again here would be a second path to the same thing.
+  # One certificate per name rather than one covering all of them, so adding a
+  # name is a new certificate and never a reissue of the ones already serving.
   ansible.builtin.command:
     cmd: >-
       certbot certonly --non-interactive --agree-tos
@@ -48,8 +50,11 @@
       --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
       --dns-cloudflare-propagation-seconds 30
       --email {{ proxy_certbot_email }}
-      -d {{ proxy_public_domain }}
-    creates: "{{ proxy_cert_dir }}/fullchain.pem"
+      -d {{ item.name }}
+    creates: "/etc/letsencrypt/live/{{ item.name }}/fullchain.pem"
+  loop: "{{ proxy_public_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Create the renewal hook directory
   ansible.builtin.file:
@@ -77,31 +82,6 @@
     name: certbot.timer
     state: started
     enabled: true
-
-- name: Publish the DNS record for {{ proxy_public_domain }}
-  # A CNAME to the name pve_ddns already keeps current, so the address is
-  # tracked in one place. DNS only: proxied, TLS would terminate at Cloudflare
-  # and the video would cross their network.
-  ansible.builtin.uri:
-    url: "https://api.cloudflare.com/client/v4/zones/{{ proxy_zone.json.result[0].id }}/dns_records"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
-    body_format: json
-    body:
-      type: CNAME
-      name: "{{ proxy_public_domain }}"
-      content: "{{ proxy_public_cname_target }}"
-      proxied: false
-      ttl: 60
-    status_code: [200, 400]
-  delegate_to: localhost
-  register: proxy_dns
-  changed_when: proxy_dns.status == 200
-  failed_when: >-
-    proxy_dns.status == 400
-    and 'already exists' not in (proxy_dns.json.errors | map(attribute='message') | join(' '))
-  no_log: true
 
 - name: Remove the default site
   ansible.builtin.file:
@@ -160,3 +140,56 @@
     name: nginx
     state: started
     enabled: true
+
+- name: Serve the new configuration before any name points here
+  # A record flipped first would send visitors to a name nginx does not serve
+  # yet, and they would be refused until the handler ran.
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the DNS records for the public names
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{ proxy_zone.json.result[0].id
+      }}/dns_records?name={{ item.name }}
+    headers:
+      Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
+  loop: "{{ proxy_public_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  register: proxy_dns_existing
+  no_log: true
+
+- name: Point each public name at this house
+  # A CNAME to the name pve_ddns already keeps current, so the address is
+  # tracked in one place. DNS only: proxied, TLS would terminate at Cloudflare
+  # and the traffic would cross their network.
+  #
+  # Created if absent and rewritten if it says anything else -- a proxied
+  # record, or one aimed at a tunnel -- so the record is what this says it is,
+  # not merely present.
+  ansible.builtin.uri:
+    url: >-
+      https://api.cloudflare.com/client/v4/zones/{{ proxy_zone.json.result[0].id
+      }}/dns_records{{ ('/' ~ item.json.result[0].id) if item.json.result else '' }}
+    method: "{{ 'PUT' if item.json.result else 'POST' }}"
+    headers:
+      Authorization: "Bearer {{ lookup('keepass', proxy_cf_token_entry) }}"
+    body_format: json
+    body:
+      type: CNAME
+      name: "{{ item.item.name }}"
+      content: "{{ proxy_public_cname_target }}"
+      proxied: false
+      ttl: 60
+  loop: "{{ proxy_dns_existing.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: >-
+    not item.json.result
+    or item.json.result[0].type != 'CNAME'
+    or item.json.result[0].content != proxy_public_cname_target
+    or item.json.result[0].proxied
+  delegate_to: localhost
+  changed_when: true
+  no_log: true

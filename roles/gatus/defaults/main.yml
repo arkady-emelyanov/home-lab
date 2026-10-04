@@ -131,6 +131,10 @@ gatus_endpoints:
   #
   # These leave the house and come back, so they also prove DNS, the tunnel or
   # the port forward, and the certificate -- all the parts a LAN check skips.
+  # The apex and rss. come through Cloudflare tunnels, with certificates
+  # Cloudflare renews; photos., secure-share. and tv. come through the 443
+  # forward to the proxy, with certificates renewed here -- so for those three
+  # the expiry check is the one that actually guards something.
   - name: "{{ public_domain }}"
     group: public
     url: "https://{{ public_domain }}/"
@@ -149,23 +153,20 @@ gatus_endpoints:
   - name: "secure-share.{{ public_domain }}"
     group: public
     # The share API's own health route, which is under /public/ and so the one
-    # path the tunnel forwards.
+    # path the proxy forwards.
     url: "https://secure-share.{{ public_domain }}/public/api/health"
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
 
   - name: "secure-share.{{ public_domain }} login"
     group: public
     # The other half, and the one that matters: the login page must NOT be
-    # reachable from outside. A 200 here means the tunnel's path rule is gone
+    # reachable from outside. A 200 here means the proxy's path rule is gone
     # and the whole file browser is on the internet.
     url: "https://secure-share.{{ public_domain }}/"
     conditions: ["[STATUS] == 404"]
 
   - name: "tv.{{ public_domain }}"
     group: public
-    # The only name served from this house directly, and the only certificate
-    # renewed here rather than by Cloudflare -- so the expiry check is the one
-    # that actually guards something.
     url: "https://tv.{{ public_domain }}/"
     # 200, not the 302 Jellyfin answers at the root: gatus follows redirects, so
     # this lands on the web interface -- which is the better thing to assert

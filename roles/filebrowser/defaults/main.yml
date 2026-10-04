@@ -8,8 +8,9 @@
 # The whole design rests on one property of it: everything a share link needs
 # -- the share page, its static assets and the API it calls -- is served under
 # /public/, and everything else (login, browsing, admin, WebDAV) is not. The
-# tunnel forwards only /public/ and answers 404 to the rest, so the login page
-# is never on the internet at all; only the links you hand out are.
+# proxy forwards only /public/ from the internet and answers 404 to the rest, so
+# the login page is never on the internet at all; only the links you hand out
+# are.
 
 filebrowser_version: v1.5.6-stable
 filebrowser_url: >-
@@ -17,8 +18,8 @@ filebrowser_url: >-
 # The digest GitHub publishes for the release asset.
 filebrowser_sha256: "febf1ded3368eac1f13481f413db272c57678b70f09e74f5513d5e25e0bfb0e5"
 
-# Bound to the LAN rather than the loopback: cloudflared runs in this container,
-# but the reverse proxy is a different one.
+# Bound to the LAN rather than the loopback: the reverse proxy is a different
+# container.
 filebrowser_port: 8080
 
 filebrowser_source_path: /srv/documents
@@ -35,18 +36,7 @@ filebrowser_admin_password_entry: filebrowser/admin-password.txt
 
 # --- Public access ----------------------------------------------------------
 #
-# Its own tunnel, like immich and miniflux: sharing should not depend on any
-# other container being up.
-#
-# Also what FileBrowser writes into a share link, so "copy link" gives the
-# address that works from outside rather than documents.home.
+# Served by the proxy, which owns the name, its certificate and the /public/
+# rule. This is only what FileBrowser writes into a share link, so "copy link"
+# gives the address that works from outside rather than documents.home.
 filebrowser_domain: "secure-share.{{ public_domain }}"
-filebrowser_tunnel_id: "{{ lookup('keepass', filebrowser_tunnel_id_entry) }}"
-filebrowser_tunnel_id_entry: filebrowser/tunnel-id
-filebrowser_tunnel_credentials_entry: filebrowser/tunnel-credentials.json
-filebrowser_cloudflared_version: "2026.9.3"
-# The digest GitHub publishes for the release asset. It is also what makes a
-# version bump take effect: without a checksum get_url keeps any file already
-# at the destination.
-filebrowser_cloudflared_sha256: "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2"
-filebrowser_cf_token_entry: cloudflare/token.txt

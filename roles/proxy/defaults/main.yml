@@ -36,9 +36,7 @@ proxy_sites:
   - name: photos.home
     upstream: "http://192.168.0.46:2283"
     # Uploads are whole videos. Unlimited rather than a large number, because
-    # any number here is a file someone cannot upload -- and this is the path
-    # that exists precisely so uploads do not go through Cloudflare, which caps
-    # bodies at 100 MB on the free plan.
+    # any number here is a file someone cannot upload.
     buffering: false
     read_timeout: 3600s
     max_body: 0
@@ -72,13 +70,12 @@ proxy_sites:
     read_timeout: 300s
     max_body: 100m
 
-# --- The one name served to the internet ----------------------------------
+# --- The names served to the internet ---------------------------------------
 #
-# Jellyfin, over TLS, on 443 only. Deliberately not through a Cloudflare tunnel:
-# Cloudflare's terms restrict proxying video, and every other name here already
-# depends on that account -- a strike over streaming would take the web site,
-# the photos and the feeds with it. Here Cloudflare only answers DNS and issues
-# nothing; the bytes go straight from this house to the viewer.
+# Over TLS, on 443 only, each straight from this house: a DNS-only record, the
+# one forward the router has, and a certificate issued here. No tunnel, so the
+# bytes never cross Cloudflare's network -- which is what lets a video be
+# streamed under their terms and uploaded past their 100 MB request cap.
 #
 # Port 80 must NOT be forwarded to this container. The LAN names above are
 # matched by Host header, and a Host header is just text anyone can send, so a
@@ -86,19 +83,47 @@ proxy_sites:
 # to the internet. The proxy_lan allow-list is the floor under this -- the :80
 # vhosts drop any source that is not a plain LAN host -- but it is a second line,
 # not the first: keep 80 unforwarded. Only 443 is forwarded, and on 443 exactly
-# one name is served.
-proxy_public_domain: "tv.{{ public_domain }}"
-proxy_public_upstream: "http://192.168.0.42:8096"
+# these names are served.
+#
+# `only`, where set, is the one path prefix forwarded; everything else on that
+# name answers 404 and never reaches the service.
+proxy_public_sites:
+  - name: "tv.{{ public_domain }}"
+    upstream: "http://192.168.0.42:8096"
+    # Whole films, streamed: unbuffered, unlimited, and a paused one is not cut
+    # off.
+    buffering: false
+    read_timeout: 3600s
+    max_body: 0
 
-# A CNAME to the name pve_ddns already keeps pointed at this address, rather
-# than a second A record to keep in step with it. DNS only -- proxied, TLS would
-# terminate at Cloudflare and the video would cross their network, which is the
-# thing this arrangement exists to avoid.
+  - name: "photos.{{ public_domain }}"
+    upstream: "http://192.168.0.46:2283"
+    # Uploads from a phone away from home are whole videos, and any limit here
+    # is a file someone cannot upload.
+    buffering: false
+    read_timeout: 3600s
+    max_body: 0
+
+  - name: "secure-share.{{ public_domain }}"
+    upstream: "http://192.168.0.50:8080"
+    # Share links only. FileBrowser serves everything a link needs -- the share
+    # page, its assets and its API -- under /public/, and nothing else is: the
+    # login page, browsing, the admin API and WebDAV are all outside it, so they
+    # never leave the house.
+    only: /public/
+    # Downloads; the share is read-only.
+    buffering: false
+    read_timeout: 300s
+    max_body: 1m
+
+# Each record is a CNAME to the name pve_ddns already keeps pointed at this
+# address, rather than an A record to keep in step with it. DNS only --
+# proxied, TLS would terminate at Cloudflare and the traffic would cross their
+# network, which is the thing this arrangement exists to avoid.
 proxy_public_cname_target: "home.{{ public_domain }}"
 
-# Issued over DNS-01: the challenge is a TXT record, so Let's Encrypt never
-# connects inbound and nothing needs port 80 open. The token is the same
-# Zone:DNS:Edit one the rest of this repository uses.
+# One certificate per name, issued over DNS-01: the challenge is a TXT record,
+# so Let's Encrypt never connects inbound and nothing needs port 80 open. The
+# token is the same Zone:DNS:Edit one the rest of this repository uses.
 proxy_cf_token_entry: cloudflare/token.txt
 proxy_certbot_email: "{{ admin_email }}"
-proxy_cert_dir: "/etc/letsencrypt/live/{{ proxy_public_domain }}"

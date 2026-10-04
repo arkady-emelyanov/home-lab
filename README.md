@@ -70,11 +70,11 @@ Tenants are unprivileged containers on DHCP with reserved addresses. Six names a
 
 Public names reach this house two different ways.
 
-The apex, `photos.`, `rss.` and `secure-share.` go through **Cloudflare tunnels**, which dial out — no port is forwarded and the addresses stay hidden behind Cloudflare's.
+The apex and `rss.` go through **Cloudflare tunnels**, which dial out — no port is forwarded and the addresses stay hidden behind Cloudflare's.
 
-`tv.` does not. Cloudflare's terms restrict proxying video, and every other name depends on that account, so Jellyfin is served **directly**: a DNS-only record, 443 forwarded to the proxy, and a Let's Encrypt certificate issued over DNS-01.
+`tv.`, `photos.` and `secure-share.` are served **directly**: a DNS-only record, 443 forwarded to the proxy, and a Let's Encrypt certificate per name issued over DNS-01. Their bytes never cross Cloudflare's network — its terms restrict proxying video, and its free plan caps a request at 100 MB, which is less than a phone video. From `secure-share.` the proxy forwards only `/public/`, so share links are on the internet and FileBrowser's login page is not.
 
-**Only 443 is forwarded, never 80.** The `.home` names are matched by Host header, and a Host header is just text anyone can send — a forwarded 80 would otherwise publish every LAN service to the internet. Two things stop it: the rule that 80 stays unforwarded, and, as a floor under it, the proxy serves the `.home` vhosts only to plain LAN sources — the gateway and anything off-subnet are dropped, so a mistaken forward reaches nothing. On 443 exactly one name is served and everything else has its connection closed.
+**Only 443 is forwarded, never 80.** The `.home` names are matched by Host header, and a Host header is just text anyone can send — a forwarded 80 would otherwise publish every LAN service to the internet. Two things stop it: the rule that 80 stays unforwarded, and, as a floor under it, the proxy serves the `.home` vhosts only to plain LAN sources — the gateway and anything off-subnet are dropped, so a mistaken forward reaches nothing. On 443 exactly those three names are served and everything else has its connection closed.
 
 WireGuard needs its own forward, UDP 51820, and is the other name that must stay DNS-only: the proxy carries HTTP, not UDP.
 
@@ -96,7 +96,7 @@ roles/
   lxc                    creates a container, starts it, finds its address
   tenant_ssh             hardens a container's sshd
   samba, jellyfin, blocky, qbittorrent, immich, miniflux, site
-  proxy                  every LAN name on port 80, and tv. on 443
+  proxy                  every LAN name on port 80; tv., photos. and secure-share. on 443
   wireguard              the way back onto the LAN from outside
   gatus                  health checks, at health.home
   filebrowser            documents in a browser, and share links out
@@ -115,7 +115,7 @@ scripts/
 
 Credentials live in a KeePassXC database — `keepass_db` in `inventory/group_vars/all.yml`. Roles read them during a converge; nothing is written to disk, and nothing in this repository names anything but an entry.
 
-The database also holds three things that are not credentials but identify this installation, under the **`identity`** group: `domain`, `email` and `mail-to`. They are there so the repository can be published. A domain resolves to this house's address, and this repository describes exactly what is listening at it and on which ports — committing the two together is the disclosure, not either alone. Roles derive their public names from `public_domain` rather than naming a zone, so the four Cloudflare tunnel ids are held the same way.
+The database also holds three things that are not credentials but identify this installation, under the **`identity`** group: `domain`, `email` and `mail-to`. They are there so the repository can be published. A domain resolves to this house's address, and this repository describes exactly what is listening at it and on which ports — committing the two together is the disclosure, not either alone. Roles derive their public names from `public_domain` rather than naming a zone, so the two Cloudflare tunnel ids are held the same way.
 
 ### Adding one
 

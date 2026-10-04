@@ -6,9 +6,3 @@
     name: immich
     state: restarted
     daemon_reload: true
-
-- name: Restart cloudflared
-  ansible.builtin.systemd_service:
-    name: cloudflared
-    state: restarted
-    daemon_reload: true
