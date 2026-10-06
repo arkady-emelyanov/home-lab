@@ -134,10 +134,18 @@ gatus_endpoints:
   # The apex and rss. come through Cloudflare tunnels, with certificates
   # Cloudflare renews; photos., secure-share. and tv. come through the 443
   # forward to the proxy, with certificates renewed here -- so for those three
-  # the expiry check is the one that actually guards something.
+  # the expiry check is the one that actually guards something. blog. is not
+  # served from here at all: it is GitHub Pages, with GitHub's certificate.
   - name: "{{ public_domain }}"
     group: public
     url: "https://{{ public_domain }}/"
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "blog.{{ public_domain }}"
+    group: public
+    # Served by GitHub Pages, not from here; the check proves the record still
+    # points there and GitHub still holds a certificate for the name.
+    url: "https://blog.{{ public_domain }}/"
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
 
   - name: "photos.{{ public_domain }}"

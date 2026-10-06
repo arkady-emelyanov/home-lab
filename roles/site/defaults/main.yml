@@ -47,6 +47,19 @@ site_root: /var/www/site
 site_projects_domain: "projects.{{ site_domain }}"
 site_projects_root: /var/www/projects
 
+# The blog: built and served by GitHub Pages, not by this container. Only its
+# DNS is here, beside the other public names in the zone. The record is DNS-only,
+# unlike the tunnel's: GitHub issues the certificate itself and has to see its own
+# address to do it. The Pages host is the account's, which site_github_url names
+# already.
+site_blog_domain: "blog.{{ site_domain }}"
+site_blog_pages_host: arkady-emelyanov.github.io
+# The verified-domain challenge, which stops another GitHub account claiming a name
+# in the zone while Pages is off. GitHub shows the value once, under the account's
+# Settings -> Pages; it names the account and so is kept with the identity values.
+site_blog_challenge_name: "_github-pages-challenge-arkady-emelyanov.{{ site_domain }}"
+site_blog_challenge_entry: site/github-pages-challenge
+
 # The Earth scene's satellites: a timer on the container fetches CelesTrak's
 # orbital elements and writes what the page needs to one file it serves. CelesTrak
 # refreshes every two hours and asks not to be asked more often, so the timer runs

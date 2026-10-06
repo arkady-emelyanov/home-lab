@@ -326,3 +326,34 @@
     - "www.{{ site_domain }}"
     - "{{ site_projects_domain }}"
   no_log: true
+
+- name: Publish the blog's records for GitHub Pages
+  # Not proxied: GitHub terminates TLS for the blog with a certificate it issues
+  # only while the name resolves straight to Pages.
+  ansible.builtin.uri:
+    url: "https://api.cloudflare.com/client/v4/zones/{{ site_zone_id }}/dns_records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ site_cf_token }}"
+    body_format: json
+    body:
+      type: "{{ item.type }}"
+      name: "{{ item.name }}"
+      content: "{{ item.content }}"
+      proxied: false
+      ttl: 1
+    status_code: [200, 400]
+  delegate_to: localhost
+  register: site_blog_dns
+  changed_when: site_blog_dns.status == 200
+  failed_when: >-
+    site_blog_dns.status == 400
+    and 'already exists' not in (site_blog_dns.json.errors | map(attribute='message') | join(' '))
+  loop:
+    - type: CNAME
+      name: "{{ site_blog_domain }}"
+      content: "{{ site_blog_pages_host }}"
+    - type: TXT
+      name: "{{ site_blog_challenge_name }}"
+      content: "{{ lookup('keepass', site_blog_challenge_entry) }}"
+  no_log: true
