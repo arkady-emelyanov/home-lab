@@ -32,7 +32,7 @@ server {
 
     root {{ site_root }};
     index index.html;
-{{ headers("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';") }}
+{{ headers("default-src 'self'; script-src 'self' 'unsafe-inline' https://" ~ site_beacon_domain ~ "; connect-src 'self' https://" ~ site_beacon_domain ~ "; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://" ~ site_beacon_domain ~ "; font-src 'self';") }}
     location / {
         try_files $uri $uri/ =404;
     }
@@ -45,14 +45,15 @@ server {
     }
 }
 
-# The projects page: one static page, no script at all, and no inline style.
+# The projects page: one static page, no inline style, and no script but the
+# page-view counter from beacon.
 server {
     listen {{ site_nginx_address }}:{{ site_nginx_port }};
     server_name {{ site_projects_domain }};
 
     root {{ site_projects_root }};
     index index.html;
-{{ headers("default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self';") }}
+{{ headers("default-src 'self'; script-src https://" ~ site_beacon_domain ~ "; connect-src https://" ~ site_beacon_domain ~ "; style-src 'self'; img-src 'self' data: https://" ~ site_beacon_domain ~ "; font-src 'self';") }}
     location / {
         try_files $uri $uri/ =404;
     }

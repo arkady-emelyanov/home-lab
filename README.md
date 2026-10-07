@@ -52,7 +52,7 @@ An Intel N100 board in a micro-ATX case: four 2.5G NICs, seven SATA ports, one S
 
 ## What runs where
 
-Tenants are unprivileged containers on DHCP with reserved addresses. Six names answer on port 80 through the proxy; the rest are reached on their own ports.
+Tenants are unprivileged containers on DHCP with reserved addresses. Seven names answer on port 80 through the proxy; the rest are reached on their own ports.
 
 | tenant | address | reached as |
 |---|---|---|
@@ -67,14 +67,15 @@ Tenants are unprivileged containers on DHCP with reserved addresses. Six names a
 | miniflux | .48 | `rss.home`, `rss.` on the public domain |
 | gatus | .49 | `health.home` |
 | filebrowser | .50 | `documents.home`; share links only at `secure-share.` on the public domain |
+| goatcounter | .51 | `stats.home`; page views counted at `beacon.` on the public domain |
 
 Public names reach this house two different ways.
 
 The apex and `rss.` go through **Cloudflare tunnels**, which dial out — no port is forwarded and the addresses stay hidden behind Cloudflare's.
 
-`tv.`, `photos.` and `secure-share.` are served **directly**: a DNS-only record, 443 forwarded to the proxy, and a Let's Encrypt certificate per name issued over DNS-01. Their bytes never cross Cloudflare's network — its terms restrict proxying video, and its free plan caps a request at 100 MB, which is less than a phone video. From `secure-share.` the proxy forwards only `/public/`, so share links are on the internet and FileBrowser's login page is not.
+`tv.`, `photos.`, `secure-share.` and `beacon.` are served **directly**: a DNS-only record, 443 forwarded to the proxy, and a Let's Encrypt certificate per name issued over DNS-01. Their bytes never cross Cloudflare's network — its terms restrict proxying video, and its free plan caps a request at 100 MB, which is less than a phone video. From `secure-share.` the proxy forwards only `/public/`, so share links are on the internet and FileBrowser's login page is not. `beacon.` is where pages report to — trackers and callbacks, each a list of exact paths routed to its tenant, with everything else answering 404; GoatCounter's script and count endpoint are there, and its dashboard stays on the LAN as `stats.home`.
 
-**Only 443 is forwarded, never 80.** The `.home` names are matched by Host header, and a Host header is just text anyone can send — a forwarded 80 would otherwise publish every LAN service to the internet. Two things stop it: the rule that 80 stays unforwarded, and, as a floor under it, the proxy serves the `.home` vhosts only to plain LAN sources — the gateway and anything off-subnet are dropped, so a mistaken forward reaches nothing. On 443 exactly those three names are served and everything else has its connection closed.
+**Only 443 is forwarded, never 80.** The `.home` names are matched by Host header, and a Host header is just text anyone can send — a forwarded 80 would otherwise publish every LAN service to the internet. Two things stop it: the rule that 80 stays unforwarded, and, as a floor under it, the proxy serves the `.home` vhosts only to plain LAN sources — the gateway and anything off-subnet are dropped, so a mistaken forward reaches nothing. On 443 exactly those four names are served and everything else has its connection closed.
 
 WireGuard needs its own forward, UDP 51820, and is the other name that must stay DNS-only: the proxy carries HTTP, not UDP.
 
@@ -96,10 +97,11 @@ roles/
   lxc                    creates a container, starts it, finds its address
   tenant_ssh             hardens a container's sshd
   samba, jellyfin, blocky, qbittorrent, immich, miniflux, site
-  proxy                  every LAN name on port 80; tv., photos. and secure-share. on 443
+  proxy                  every LAN name on port 80; tv., photos., secure-share. and beacon. on 443
   wireguard              the way back onto the LAN from outside
   gatus                  health checks, at health.home
   filebrowser            documents in a browser, and share links out
+  goatcounter            page views for the public pages, at stats.home
 lookup_plugins/
   keepass.py             reads secrets from the database at converge time
 scripts/

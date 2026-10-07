@@ -1,0 +1,45 @@
+---
+# GoatCounter: page views for the public pages, kept here rather than handed to
+# an analytics company. The container is declared in
+# inventory/host_vars/goatcounter.yml.
+#
+# Chosen for being one static Go binary over SQLite -- no database server, no
+# Docker -- and for what it does not collect: no cookies and no stored visitor
+# address, so the pages need no consent banner.
+#
+# Two ways in, through the proxy, and they are deliberately not the same:
+#
+#   stats.home                   the dashboard, LAN only
+#   beacon.<public_domain>       /goatcounter/count and /goatcounter/count.js,
+#                                and nothing else of this service
+#
+# GoatCounter picks the site by Host header, so the proxy sends the vhost below
+# as the Host on both paths: a count arriving at beacon. lands in the same site
+# the dashboard shows.
+
+goatcounter_version: "2.7.0"
+goatcounter_arch: amd64
+# The release publishes no checksum file, so this is the digest of the asset as
+# downloaded and checked by hand. Update when the version changes:
+#   curl -sSL <url> | sha256sum
+goatcounter_sha256: "98d221cb9c8ef2bf76d8daa9cca647839f8d8b0bb5bc7400ff9337c5da834511"
+
+goatcounter_user: goatcounter
+goatcounter_install_dir: /opt/goatcounter
+goatcounter_state_dir: /var/lib/goatcounter
+goatcounter_db: "sqlite+{{ goatcounter_state_dir }}/db.sqlite3"
+
+# Bound to the LAN rather than the loopback: the reverse proxy is a different
+# container.
+goatcounter_port: 8080
+
+# The one site, and the name its dashboard answers on. Also the Host the proxy
+# sends for counts arriving at beacon.
+goatcounter_vhost: stats.home
+
+# The only account. Its email is the login; the password is set when the site
+# is created and is not converged afterwards -- GoatCounter stores a bcrypt hash
+# and offers no way to compare against one. To rotate it, change it in the
+# dashboard and in the database entry together.
+goatcounter_admin_email: "{{ admin_email }}"
+goatcounter_admin_password_entry: goatcounter/admin-password.txt

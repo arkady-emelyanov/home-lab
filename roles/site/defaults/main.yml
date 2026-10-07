@@ -47,6 +47,12 @@ site_root: /var/www/site
 site_projects_domain: "projects.{{ site_domain }}"
 site_projects_root: /var/www/projects
 
+# Page views: both pages load GoatCounter's script from beacon., the proxy's name
+# for things pages report to, and send their counts back there. Not served by
+# this container -- it is a route on the proxy to the goatcounter tenant -- and
+# so named in the CSP of each page, which otherwise allows nothing off-site.
+site_beacon_domain: "beacon.{{ site_domain }}"
+
 # The blog: built and served by GitHub Pages, not by this container. Only its
 # DNS is here, beside the other public names in the zone. The record is DNS-only,
 # unlike the tunnel's: GitHub issues the certificate itself and has to see its own

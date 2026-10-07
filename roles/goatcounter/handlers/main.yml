@@ -1,0 +1,6 @@
+---
+- name: Restart goatcounter
+  ansible.builtin.systemd_service:
+    name: goatcounter
+    state: restarted
+    daemon_reload: true

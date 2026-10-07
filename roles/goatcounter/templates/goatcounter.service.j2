@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+[Unit]
+Description=GoatCounter web analytics
+Documentation=https://github.com/arp242/goatcounter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ goatcounter_user }}
+Group={{ goatcounter_user }}
+# -tls http: TLS ends at the proxy. The proxy sends X-Real-IP, which is where
+# the visitor's country comes from; the address itself is not stored.
+ExecStart={{ goatcounter_install_dir }}/goatcounter serve -listen :{{ goatcounter_port }} -tls http -db {{ goatcounter_db }} -automigrate
+WorkingDirectory={{ goatcounter_state_dir }}
+StateDirectory=goatcounter
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

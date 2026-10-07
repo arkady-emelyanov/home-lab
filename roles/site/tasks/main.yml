@@ -179,6 +179,8 @@
           - "{{ site_github_url }}"
           - --linkedin
           - "{{ site_linkedin_url }}"
+          - --beacon
+          - "{{ site_beacon_domain }}"
       delegate_to: localhost
       changed_when: false
 

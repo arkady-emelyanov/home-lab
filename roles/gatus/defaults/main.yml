@@ -81,6 +81,12 @@ gatus_endpoints:
     url: "http://192.168.0.50:8080/health"
     conditions: ["[STATUS] == 200"]
 
+  - name: goatcounter
+    group: tenants
+    # Answered before any site is looked up, so it needs no Host header.
+    url: "http://192.168.0.51:8080/status"
+    conditions: ["[STATUS] == 200"]
+
   - name: proxy
     group: tenants
     url: "http://192.168.0.47/"
@@ -132,8 +138,8 @@ gatus_endpoints:
   # These leave the house and come back, so they also prove DNS, the tunnel or
   # the port forward, and the certificate -- all the parts a LAN check skips.
   # The apex and rss. come through Cloudflare tunnels, with certificates
-  # Cloudflare renews; photos., secure-share. and tv. come through the 443
-  # forward to the proxy, with certificates renewed here -- so for those three
+  # Cloudflare renews; photos., secure-share., tv. and beacon. come through the
+  # 443 forward to the proxy, with certificates renewed here -- so for those
   # the expiry check is the one that actually guards something. blog. is not
   # served from here at all: it is GitHub Pages, with GitHub's certificate.
   - name: "{{ public_domain }}"
@@ -171,6 +177,20 @@ gatus_endpoints:
     # reachable from outside. A 200 here means the proxy's path rule is gone
     # and the whole file browser is on the internet.
     url: "https://secure-share.{{ public_domain }}/"
+    conditions: ["[STATUS] == 404"]
+
+  - name: "beacon.{{ public_domain }}"
+    group: public
+    # The script every public page loads, which proves the route, the
+    # certificate and GoatCounter behind them.
+    url: "https://beacon.{{ public_domain }}/goatcounter/count.js"
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 240h"]
+
+  - name: "beacon.{{ public_domain }} unrouted"
+    group: public
+    # Only the listed paths go anywhere. A 200 here means the proxy is
+    # forwarding the whole name, and GoatCounter's dashboard with it.
+    url: "https://beacon.{{ public_domain }}/goatcounter/"
     conditions: ["[STATUS] == 404"]
 
   - name: "tv.{{ public_domain }}"

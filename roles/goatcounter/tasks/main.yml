@@ -1,0 +1,135 @@
+---
+# GoatCounter ships as a gzipped static binary, so it is installed from the
+# release at a pinned version, verified against a pinned digest.
+#
+# Each version decompresses into its own directory and a symlink points at the
+# current one, so a version bump is a changed symlink -- which notifies the
+# restart.
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ goatcounter_user }}"
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+
+- name: Install pexpect, for setting the password through a terminal
+  # GoatCounter reads a new user's password from a terminal or from argv, and
+  # argv is readable by every user on the machine. The expect task below is the
+  # terminal.
+  ansible.builtin.apt:
+    name: python3-pexpect
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the install directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ goatcounter_install_dir }}"
+    - "{{ goatcounter_install_dir }}/{{ goatcounter_version }}"
+
+- name: Create the state directory
+  ansible.builtin.file:
+    path: "{{ goatcounter_state_dir }}"
+    state: directory
+    owner: "{{ goatcounter_user }}"
+    group: "{{ goatcounter_user }}"
+    mode: "0750"
+
+- name: Download the release
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/arp242/goatcounter/releases/download/v{{ goatcounter_version
+      }}/goatcounter-v{{ goatcounter_version }}-linux-{{ goatcounter_arch }}.gz
+    dest: "/tmp/goatcounter-{{ goatcounter_version }}.gz"
+    checksum: "sha256:{{ goatcounter_sha256 }}"
+    mode: "0644"
+
+- name: Decompress it
+  community.general.decompress:
+    src: "/tmp/goatcounter-{{ goatcounter_version }}.gz"
+    dest: "{{ goatcounter_install_dir }}/{{ goatcounter_version }}/goatcounter"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Point the current symlink at this version
+  ansible.builtin.file:
+    src: "{{ goatcounter_install_dir }}/{{ goatcounter_version }}/goatcounter"
+    dest: "{{ goatcounter_install_dir }}/goatcounter"
+    state: link
+  notify: Restart goatcounter
+
+# The database and the site are made as the service account, not as root: an
+# SQLite file root created, or the journal beside it, is one the service then
+# cannot write. runuser drops from root; it does not escalate.
+- name: Create the database
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ goatcounter_user }}"
+      - --
+      - "{{ goatcounter_install_dir }}/goatcounter"
+      - db
+      - newdb
+      - -db
+      - "{{ goatcounter_db }}"
+    creates: "{{ goatcounter_state_dir }}/db.sqlite3"
+
+- name: Look for the site
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ goatcounter_user }}"
+      - --
+      - "{{ goatcounter_install_dir }}/goatcounter"
+      - db
+      - show
+      - site
+      - -find
+      - "{{ goatcounter_vhost }}"
+      - -db
+      - "{{ goatcounter_db }}"
+  register: goatcounter_site
+  changed_when: false
+  # 1 is "nothing found", which is the answer the next task acts on.
+  failed_when: goatcounter_site.rc not in [0, 1]
+
+- name: Create the site and its account
+  ansible.builtin.expect:
+    command: >-
+      runuser -u {{ goatcounter_user }} --
+      {{ goatcounter_install_dir }}/goatcounter db create site
+      -vhost {{ goatcounter_vhost }}
+      -user.email {{ goatcounter_admin_email }}
+      -db {{ goatcounter_db }}
+    responses:
+      "Enter password": "{{ lookup('keepass', goatcounter_admin_password_entry) }}"
+      "Confirm": "{{ lookup('keepass', goatcounter_admin_password_entry) }}"
+  when: goatcounter_site.rc == 1
+  no_log: true
+
+- name: Install the service unit
+  ansible.builtin.template:
+    src: goatcounter.service.j2
+    dest: /etc/systemd/system/goatcounter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart goatcounter
+
+- name: Start GoatCounter
+  ansible.builtin.systemd_service:
+    name: goatcounter
+    state: started
+    enabled: true
+    daemon_reload: true

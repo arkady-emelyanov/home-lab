@@ -1,0 +1,17 @@
+---
+# GoatCounter: who visits the public pages. Counted from beacon. on the public
+# domain, read at stats.home.
+lxc_vmid: 121
+lxc_mac: "BC:24:11:00:00:79"
+
+lxc_hostname: goatcounter
+
+# One Go binary and an SQLite file. A personal site's traffic is a few rows a
+# day; the disk is for years of them.
+lxc_cores: 1
+lxc_memory: 256
+lxc_disk: 4
+
+# Nothing from the pool. The database is on the container's own disk, which
+# vzdump takes nightly with the rest of the container.
+lxc_mounts: []

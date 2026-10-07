@@ -146,3 +146,15 @@
     - role: lxc
     - role: tenant_ssh
     - role: filebrowser
+
+- name: GoatCounter page views for the public pages
+  hosts: goatcounter
+  gather_facts: false
+  pre_tasks:
+    - name: Skip goatcounter when it is turned off
+      ansible.builtin.meta: end_host
+      when: not (tenant_enabled | bool)
+  roles:
+    - role: lxc
+    - role: tenant_ssh
+    - role: goatcounter

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Compile content/ into a single static page.
 
-    build.py OUT --home URL --projects URL --github URL --linkedin URL
+    build.py OUT --home URL --projects URL --github URL --linkedin URL [--beacon HOST]
 
 The links come from the role rather than from content/, so no domain is written here.
+--beacon adds GoatCounter's page-view script, served from that host; without it
+the page has no script at all, which is what a local preview wants.
 
 content/index.md          front matter for the page, body for the one-line intro
 content/projects/*.md     one project each: front matter for title, group, stack and repo;
@@ -92,6 +94,7 @@ def main():
     args.add_argument("--projects", required=True)
     args.add_argument("--github", required=True)
     args.add_argument("--linkedin", required=True)
+    args.add_argument("--beacon")
     args = args.parse_args()
     out = args.out
 
@@ -131,6 +134,11 @@ def main():
         home=args.home,
         home_name=html.escape(urlsplit(args.home).netloc),
         links=page("links", github=args.github, linkedin=args.linkedin),
+        counter=(
+            f'<script data-goatcounter="https://{args.beacon}/goatcounter/count" async '
+            f'src="https://{args.beacon}/goatcounter/count.js"></script>\n'
+            if args.beacon else ""
+        ),
         intro=render(intro),
         sections="\n".join(sections),
     ))

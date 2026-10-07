@@ -2,6 +2,26 @@
 #
 # The only server blocks listening on 443, and the only names reachable from
 # outside this house.
+{#
+  What every forwarded location does, whether it is a whole name or one route
+  of several.
+#}
+{% macro proxied(site, upstream, host) %}
+        proxy_pass {{ upstream }};
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host {{ host }};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering {{ 'on' if site.buffering else 'off' }};
+        proxy_read_timeout {{ site.read_timeout }};
+        proxy_send_timeout {{ site.read_timeout }};
+{%- endmacro %}
 {% for site in proxy_public_sites %}
 
 server {
@@ -25,21 +45,23 @@ server {
 
     client_max_body_size {{ site.max_body }};
 
+{% if site.routes is defined %}
+{% for route in site.routes %}
+{% if not loop.first %}
+
+{% endif %}
+    location = {{ route.path }} {
+{{ proxied(site, route.upstream, route.host | default('$host')) }}
+    }
+{% endfor %}
+
+    # Every path no route names.
+    location / {
+        return 404;
+    }
+{% else %}
     location {{ '^~ ' ~ site.only if site.only is defined else '/' }} {
-        proxy_pass {{ site.upstream }};
-
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_buffering {{ 'on' if site.buffering else 'off' }};
-        proxy_read_timeout {{ site.read_timeout }};
-        proxy_send_timeout {{ site.read_timeout }};
+{{ proxied(site, site.upstream, '$host') }}
     }
 {% if site.only is defined %}
 
@@ -47,6 +69,7 @@ server {
     location / {
         return 404;
     }
+{% endif %}
 {% endif %}
 }
 {% endfor %}

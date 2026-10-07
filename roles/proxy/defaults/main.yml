@@ -70,6 +70,14 @@ proxy_sites:
     read_timeout: 300s
     max_body: 100m
 
+  - name: stats.home
+    upstream: "http://192.168.0.51:8080"
+    # GoatCounter's dashboard. Its live view is a websocket, which the upgrade
+    # headers carry.
+    buffering: true
+    read_timeout: 300s
+    max_body: 1m
+
 # --- The names served to the internet ---------------------------------------
 #
 # Over TLS, on 443 only, each straight from this house: a DNS-only record, the
@@ -87,6 +95,11 @@ proxy_sites:
 #
 # `only`, where set, is the one path prefix forwarded; everything else on that
 # name answers 404 and never reaches the service.
+#
+# `routes`, in place of `upstream`, puts several services behind one name: each
+# route is one exact path and where it goes, and every path not listed answers
+# 404. A route may set `host`, the Host header its upstream is sent, for a
+# service that picks what to serve by name.
 proxy_public_sites:
   - name: "tv.{{ public_domain }}"
     upstream: "http://192.168.0.42:8096"
@@ -115,6 +128,25 @@ proxy_public_sites:
     buffering: false
     read_timeout: 300s
     max_body: 1m
+
+  - name: "beacon.{{ public_domain }}"
+    # Where pages report to: trackers and callbacks, one path prefix per service,
+    # each listing the exact paths it needs public and nothing more. A new one is
+    # another route here, not another name.
+    routes:
+      # GoatCounter's script and the endpoint it reports to. Sent as stats.home,
+      # the name its one site is created under, so a count lands where the
+      # dashboard reads. The dashboard itself is not routed: it stays on the LAN.
+      - path: /goatcounter/count.js
+        upstream: "http://192.168.0.51:8080/count.js"
+        host: stats.home
+      - path: /goatcounter/count
+        upstream: "http://192.168.0.51:8080/count"
+        host: stats.home
+    # A count is a query string, or a small beacon POST.
+    buffering: true
+    read_timeout: 30s
+    max_body: 16k
 
 # Each record is a CNAME to the name pve_ddns already keeps pointed at this
 # address, rather than an A record to keep in step with it. DNS only --

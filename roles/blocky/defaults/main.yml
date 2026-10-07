@@ -73,6 +73,7 @@ blocky_custom_dns:
   rss.home: 192.168.0.47
   documents.home: 192.168.0.47
   health.home: 192.168.0.47
+  stats.home: 192.168.0.47
   proxy.home: 192.168.0.47
   blocky.home: 192.168.0.40
 blocky_custom_ttl: 1h
