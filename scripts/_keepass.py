@@ -2,7 +2,8 @@
 
 Not used by Ansible -- the roles read secrets through lookup_plugins/keepass.py,
 which cannot prompt because it runs inside a forked worker. These are ordinary
-interactive tools, so they can ask.
+interactive tools, so they can ask: at the terminal, or with no terminal, in a
+desktop dialog.
 """
 
 import getpass
@@ -59,14 +60,26 @@ def cli():
     return _CLI
 
 
+def _ask(prompt):
+    """At the terminal when there is one; otherwise in a desktop dialog, see askpass."""
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt + " ")
+    why = (f"Running: {pathlib.Path(sys.argv[0]).name} {' '.join(sys.argv[1:])} -- it needs "
+           "the passphrase to open the KeePassXC database.")
+    done = subprocess.run([str(pathlib.Path(__file__).resolve().parent / "askpass"), prompt, why],
+                          stdout=subprocess.PIPE, text=True)
+    value = done.stdout.rstrip("\n")
+    if done.returncode != 0 or not value:
+        sys.exit("no passphrase given")
+    return value
+
+
 def passphrase():
     global _PASSPHRASE
     if _PASSPHRASE is None:
         if not DB.exists():
             sys.exit(f"{DB} does not exist")
-        _PASSPHRASE = os.environ.get("NAS_SECRETS_PASSPHRASE") or getpass.getpass(
-            f"Passphrase for {DB.name}: "
-        )
+        _PASSPHRASE = os.environ.get("NAS_SECRETS_PASSPHRASE") or _ask(f"Passphrase for {DB.name}:")
     return _PASSPHRASE
 
 

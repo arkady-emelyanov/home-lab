@@ -1,0 +1,51 @@
+#!/bin/sh
+# Ask for a passphrase in a desktop dialog and print it on stdout.
+#
+#     askpass "Passphrase for automation.kdbx:" "Why it is wanted, in a sentence."
+#
+# For when there is no terminal to type into -- a command started by an editor
+# or an agent rather than at a shell -- so a converge can still be begun from
+# there, with the passphrase typed by a person into a window rather than handed
+# to whatever started it.
+#
+# The same convention as sudo -A and ssh: a program named by SUDO_ASKPASS or
+# SSH_ASKPASS is used first, with the prompt as its argument, so whatever dialog
+# the desktop already uses for those is the one shown here. Failing that,
+# zenity, then kdialog. Exits non-zero, printing nothing, when the dialog is
+# cancelled or there is no display to put one on.
+#
+# The reason is shown above the prompt, because a dialog that appears unbidden
+# asking for the key to every secret should say what wants it. It names a
+# command, never a secret: argv is readable by every user on the machine.
+set -eu
+
+PROMPT="${1:-Passphrase:}"
+WHY="${2:-}"
+TEXT="${WHY:+$WHY
+
+}$PROMPT"
+
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    echo "askpass: no terminal and no display to ask on" >&2
+    exit 1
+fi
+
+for p in "${SUDO_ASKPASS:-}" "${SSH_ASKPASS:-}"; do
+    if [ -n "$p" ] && [ -x "$p" ]; then
+        exec "$p" "$TEXT"
+    fi
+done
+
+if command -v zenity >/dev/null 2>&1; then
+    # An entry rather than --password, which has no room for text. Its label does
+    # not wrap, and the window grows to the longest line whatever --width says, so
+    # the text is folded here; markup is escaped.
+    MARKUP="$(printf '%s\n' "$TEXT" | fold -s -w 60 | sed 's/ *$//; s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')"
+    exec zenity --entry --hide-text --title=nas-next --text="$MARKUP" 2>/dev/null
+fi
+if command -v kdialog >/dev/null 2>&1; then
+    exec kdialog --title nas-next --password "$TEXT"
+fi
+
+echo "askpass: no dialog program found: sudo apt install zenity" >&2
+exit 1
