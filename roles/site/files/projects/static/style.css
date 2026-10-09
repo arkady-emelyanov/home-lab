@@ -34,7 +34,7 @@ body::before {
 }
 
 .head, main {
-  width: min(100% - 40px, 680px);
+  width: min(100% - 40px, 66.6667vw);
   margin-left: max(20px, 14vw);
 }
 
@@ -71,7 +71,7 @@ body::before {
 }
 .item h3 a:hover, .item h3 a:focus-visible { color: var(--air); text-decoration-color: var(--air); outline: none; }
 .item h3 a:hover::after, .item h3 a:focus-visible::after { opacity: 1; transform: translate(2px, -2px); }
-.essence p { margin: 0; max-width: 36em; color: var(--dim); font-size: 14.5px; }
+.essence p { margin: 0; color: var(--dim); font-size: 14.5px; }
 /* keycaps, as on a white Magic Keyboard: a pale, nearly flat cap with dark
    legends, rounded corners, and a thin shadow where it sits in the frame */
 kbd {
