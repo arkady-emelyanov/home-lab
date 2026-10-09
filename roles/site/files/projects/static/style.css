@@ -58,19 +58,20 @@ body::before {
 
 .item + .item { margin-top: 30px; }
 .item h3 { margin: 0 0 4px; font-size: 17px; font-weight: 400; letter-spacing: .01em; }
-/* a title is a link to the repository: say so before the pointer gets there */
-.item h3 a {
+/* a title is a link to the repository, and carries GitHub's mark to say so before the pointer gets there */
+.item h3 .repo { transition: color .3s ease; }
+.item h3 .repo span {
   text-decoration: underline; text-decoration-color: rgba(169, 156, 255, .35);
   text-decoration-thickness: 1px; text-underline-offset: 5px;
-  transition: color .3s ease, text-decoration-color .3s ease;
+  transition: text-decoration-color .3s ease;
 }
-.item h3 a::after {
-  content: "↗"; display: inline-block; margin-left: 6px;
-  color: var(--air); font-size: 13px; opacity: .7;
-  transition: transform .3s ease, opacity .3s ease;
+.item h3 .repo svg {
+  width: .8em; height: .8em; margin-left: 8px; vertical-align: -.02em;
+  fill: var(--air); opacity: .7; transition: opacity .3s ease;
 }
-.item h3 a:hover, .item h3 a:focus-visible { color: var(--air); text-decoration-color: var(--air); outline: none; }
-.item h3 a:hover::after, .item h3 a:focus-visible::after { opacity: 1; transform: translate(2px, -2px); }
+.item h3 .repo:hover, .item h3 .repo:focus-visible { color: var(--air); outline: none; }
+.item h3 .repo:hover span, .item h3 .repo:focus-visible span { text-decoration-color: var(--air); }
+.item h3 .repo:hover svg, .item h3 .repo:focus-visible svg { opacity: 1; }
 .essence p { margin: 0; color: var(--dim); font-size: 14.5px; }
 /* keycaps, as on a white Magic Keyboard: a pale, nearly flat cap with dark
    legends, rounded corners, and a thin shadow where it sits in the frame */
@@ -84,6 +85,12 @@ kbd {
   vertical-align: 1px;
 }
 kbd + kbd { margin-left: 3px; }
+/* a post that introduces the project, beside the title: quieter than it, in the accent */
+.item h3 .post { margin-left: 18px; font-size: 13px; color: var(--air); opacity: .8; white-space: nowrap; transition: opacity .3s ease; }
+.item h3 .post::after { content: "→"; display: inline-block; margin-left: 5px; transition: transform .3s ease; }
+.item h3 .post:hover, .item h3 .post:focus-visible { opacity: 1; outline: none; }
+.item h3 .post:hover::after, .item h3 .post:focus-visible::after { transform: translateX(3px); }
+.item h3 .post svg { width: 1.6em; height: 1.1em; margin-right: 6px; fill: currentColor; vertical-align: -.2em; }
 .stack { margin: 10px 0 0; color: var(--faint); font: 400 11px/1.6 var(--mono); letter-spacing: .04em; }
 
 main { padding-bottom: env(safe-area-inset-bottom); }

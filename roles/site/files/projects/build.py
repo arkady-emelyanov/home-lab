@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Compile content/ into a single static page.
 
-    build.py OUT --home URL --projects URL --github URL --linkedin URL [--beacon HOST]
+    build.py OUT --home URL --projects URL --github URL --linkedin URL [--blog URL] [--beacon HOST]
 
 The links come from the role rather than from content/, so no domain is written here.
 --beacon adds GoatCounter's page-view script, served from that host; without it
-the page has no script at all, which is what a local preview wants.
+the page has no script at all, which is what a local preview wants. --blog is
+where a project's `post` is found; without it, posts are not linked.
 
 content/index.md          front matter for the page, body for the one-line intro
-content/projects/*.md     one project each: front matter for title, group, stack and repo;
+content/projects/*.md     one project each: front matter for title, group, stack and repo,
+                          and optionally post, a post that introduces it: a path on the
+                          blog, or a full URL for one published elsewhere;
                           body for the essence
 templates/*.html          string.Template pages
 templates/llms.txt        string.Template for llms.txt; the project list is filled in
@@ -79,12 +82,38 @@ def fingerprint(out):
     rewrite(out / "index.html", versions)
 
 
-def llms_entry(meta, body):
+def post_url(meta, blog):
+    """The post that introduces the project: a full URL as it is, a path on the blog if
+    the blog is known, or None."""
+    post = meta.get("post")
+    if post and urlsplit(post).scheme:
+        return post
+    return blog.rstrip("/") + "/" + post.strip("/") + "/" if blog and post else None
+
+
+# The Medium mark (Simple Icons), for a post published there.
+MEDIUM = ('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.54 12a6.8 6.8 0 0 1-6.77 6.82A6.8 6.8 0 0 1 0 12a6.8 6.8 0 0 1 '
+          '6.77-6.82A6.8 6.8 0 0 1 13.54 12zm7.42 0c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42 '
+          '3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.66 0-1.19-2.58-1.19-5.75s.53-5.75 1.19-5.75C23.47 6.25 24 8.83 24 12z"/></svg>')
+
+
+def post_link(meta, blog):
+    """The link to that post, set beside the title, or nothing."""
+    url = post_url(meta, blog)
+    if not url:
+        return ""
+    on_medium = (urlsplit(url).hostname or "").endswith("medium.com")
+    label = f"{MEDIUM}Read on Medium" if on_medium else "Read the introduction"
+    return f'<a class="post" href="{html.escape(url)}">{label}</a>'
+
+
+def llms_entry(meta, body, blog):
     """One `- [title](repo): note` line: the essence on a single line, then the stack."""
     # Plain text: markup a content file uses for the page, keycaps say, is noise here.
     essence = " ".join(re.sub(r"<[^>]+>", "", body).split())
     stack = ", ".join(part.strip() for part in meta["stack"].split("·"))
-    return f"- [{meta['title']}]({meta['repo']}): {essence} Stack: {stack}."
+    post = post_url(meta, blog)
+    return f"- [{meta['title']}]({meta['repo']}): {essence} Stack: {stack}." + (f" Introduction: {post}" if post else "")
 
 
 def main():
@@ -94,6 +123,7 @@ def main():
     args.add_argument("--projects", required=True)
     args.add_argument("--github", required=True)
     args.add_argument("--linkedin", required=True)
+    args.add_argument("--blog")
     args.add_argument("--beacon")
     args = args.parse_args()
     out = args.out
@@ -114,6 +144,7 @@ def main():
                 title=html.escape(meta["title"]),
                 repo=meta["repo"],
                 essence=render(body),
+                post=post_link(meta, args.blog),
                 stack=html.escape(meta["stack"]),
             )
             for meta, body in projects
@@ -154,7 +185,7 @@ def main():
         github=args.github,
         linkedin=args.linkedin,
         projects="\n".join(
-            llms_entry(meta, body)
+            llms_entry(meta, body, args.blog)
             for group in groups
             for meta, body in projects
             if meta["group"] == group
