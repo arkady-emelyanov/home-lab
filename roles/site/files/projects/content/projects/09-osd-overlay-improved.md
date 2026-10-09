@@ -1,6 +1,6 @@
 ---
 title: OSD Overlay
-group: FPV
+group: Just for fun
 stack: TypeScript · Electron · React
 repo: https://github.com/arkady-emelyanov/osd-overlay-improved
 ---

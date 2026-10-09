@@ -1,6 +1,6 @@
 ---
 title: ExpressLRS Joystick
-group: FPV
+group: Just for fun
 stack: C++ · Arduino · PlatformIO · CRSF · USB HID
 repo: https://github.com/arkady-emelyanov/ExpressLRS-Joystick
 ---
