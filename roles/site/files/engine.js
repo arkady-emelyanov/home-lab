@@ -243,6 +243,7 @@ function resize() {
 const MAX_YAW = 9 * DEG, MAX_PITCH = 7 * DEG;
 let tx = 0, ty = 0, cx = 0, cy = 0, usingMotion = false, base = null;
 window.addEventListener("pointermove", (e) => {
+  if (pinch) return;                                     // two fingers zoom; they do not steer
   if (e.pointerType === "mouse" || e.buttons) { tx = (e.clientX / W) * 2 - 1; ty = (e.clientY / H) * 2 - 1; usingMotion = false; }
 }, { passive: true });
 window.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse" && !usingMotion) { tx = 0; ty = 0; } });
@@ -264,7 +265,7 @@ function onOrient(e) {
 if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission !== "function")
   window.addEventListener("deviceorientation", onOrient);
 
-// ---------------------------------------------------------------- wheel: a little zoom, eased
+// ---------------------------------------------------------------- wheel and two fingers: a little zoom, eased
 // The wheel (and a trackpad pinch, which arrives as a wheel event with ctrlKey) moves the
 // camera at most a quarter closer or farther; dots scale with it, so the look holds.
 const ZOOM_MIN = 0.78, ZOOM_MAX = 1.28;
@@ -274,6 +275,28 @@ window.addEventListener("wheel", (e) => {
   const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
   zoomT = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomT * Math.exp(dy * (e.ctrlKey ? 0.01 : 0.0012))));
 }, { passive: false });
+
+// Two fingers on a touch screen do the same: spread or pinch them, or slide both up to
+// come closer and down to draw back. Each move is measured from the last, so the two
+// combine. Safari zooms the page on a pinch whatever touch-action says, unless its own
+// gesture events are refused.
+let pinch = null;
+const twoFingers = (e) => {
+  const [a, b] = e.touches;
+  return { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), y: (a.clientY + b.clientY) / 2 };
+};
+window.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2) { pinch = twoFingers(e); tx = 0; ty = 0; }
+}, { passive: true });
+window.addEventListener("touchmove", (e) => {
+  if (!pinch || e.touches.length !== 2) return;
+  const g = twoFingers(e);
+  zoomT = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomT * (pinch.d / g.d) * Math.exp((g.y - pinch.y) * 0.0025)));
+  pinch = g;
+}, { passive: true });
+window.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinch = null; });
+window.addEventListener("touchcancel", () => { pinch = null; });
+for (const g of ["gesturestart", "gesturechange"]) document.addEventListener(g, (e) => e.preventDefault());
 
 // ---------------------------------------------------------------- loop
 gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.clearColor(0, 0, 0, 1);
