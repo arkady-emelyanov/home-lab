@@ -10,6 +10,9 @@ window.PART = "station";
 // normal: it is lit by the Sun, hidden when it faces away, and backed by a black
 // core just under the skin so the far side and whatever is behind stay hidden.
 // Window lights and running lights glow on their own.
+// A block, so that PART is not a global: the page runs this file again each time
+// the scene comes round, and a second top-level const would not compile.
+{
 const PART = window.PART || "station";
 window.SCENE = {
   view: PART === "ship"
@@ -312,3 +315,4 @@ vec3 place(vec3 p, vec4 e, inout vec3 col, inout float flux) {
     return { data: new Float32Array(out), solid: new Float32Array(solid), solidSize: PART === "ship" ? 0.01 : 0.022 };
   },
 };
+}

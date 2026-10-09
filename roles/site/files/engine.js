@@ -18,12 +18,15 @@
 //   (opaque surface points, depth-tested, colour = rgb * flux; solidSize in world
 //   units; a point with e.w = -k is drawn k times larger) which then hides whatever
 //   glowing points lie behind it
+//
+// The page runs it as ENGINE.run(SCENE), and again with another scene to swap one in:
+// the GL context, the input and the frame loop stay, and everything built from the
+// scene is freed and built anew. ENGINE.leave() fades the current scene out first.
 (() => {
 "use strict";
-const S = window.SCENE;
 const canvas = document.getElementById("c");
 const gl = canvas.getContext("webgl", { antialias: false, alpha: false, depth: true, powerPreference: "high-performance" });
-if (!gl) { document.body.insertAdjacentHTML("beforeend", "<p style='position:fixed;top:45%;width:100%;text-align:center'>WebGL is not available.</p>"); return; }
+if (!gl) { document.body.insertAdjacentHTML("beforeend", "<p style='position:fixed;top:45%;width:100%;text-align:center'>WebGL is not available.</p>"); window.ENGINE = { run() {}, leave() {} }; return; }
 const DEG = Math.PI / 180;
 const coarse = matchMedia("(pointer: coarse)").matches;
 const small = Math.min(screen.width, screen.height) < 700;
@@ -40,10 +43,6 @@ function rnd() {
 function gauss() { let u = 0; while (u === 0) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); }
 function b64(s, T) { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new T(u.buffer); }
 const ctx = { rnd, gauss, b64, DEG, coarse, small, lite: coarse || small };
-
-// ---------------------------------------------------------------- data
-const built = S.build(ctx);
-const data = built.data, STRIDE = 11, count = data.length / STRIDE;
 
 // ---------------------------------------------------------------- GL
 function shader(type, src) {
@@ -90,7 +89,6 @@ void main() {
   if (r2 > 1.0) discard;
   gl_FragColor = vec4(vCol * exp(-r2 * 3.5), 1.0);
 }`;
-const prog = program(HEAD + S.glsl + MAIN, FS);
 const DUST_MAIN = `
 uniform float uDustPx;
 void main() {
@@ -112,7 +110,6 @@ void main() {
   if (r2 > 1.0) discard;
   gl_FragColor = vec4(vCol * (1.0 - r2), 1.0);
 }`;
-const progDust = built.dust ? program(HEAD + S.glsl + DUST_MAIN, FS_DUST) : null;
 const SOLID_MAIN = `
 uniform float uSolidPx;
 void main() {
@@ -134,13 +131,11 @@ void main() {
   if (dot(p, p) > 1.0) discard;
   gl_FragColor = vec4(vCol, 1.0);
 }`;
-const progSolid = built.solid ? program(HEAD + S.glsl + SOLID_MAIN, FS_SOLID) : null;
 const progBg = program(HEAD + "vec3 place(vec3 p, vec4 e, inout vec3 c, inout float f) { return p; }" + MAIN, FS);
 const U = (p) => { const o = {}; for (const n of ["uMV", "uP", "uDpr", "uRef", "uExposure", "uFade", "uScale", "uHaze", "uTime", "uCam"]) o[n] = gl.getUniformLocation(p, n); return o; };
-const u = U(prog), ub = U(progBg), tickLoc = {};
-const us = progSolid ? Object.assign(U(progSolid), { uSolidPx: gl.getUniformLocation(progSolid, "uSolidPx") }) : null;
-const ud = progDust ? Object.assign(U(progDust), { uDustPx: gl.getUniformLocation(progDust, "uDustPx") }) : null;
+const ub = U(progBg);
 
+const STRIDE = 11;
 function makeBuf(arr, dynamic) {
   const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
   gl.bufferData(gl.ARRAY_BUFFER, arr, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
@@ -151,34 +146,6 @@ function bindBuf(b) {
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 44, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 44, 12);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 44, 28);
-}
-const main = makeBuf(data, !!S.step);
-const dustBuf = built.dust ? makeBuf(built.dust, false) : null;
-const frontBuf = built.front ? makeBuf(built.front, false) : null;
-const solidBuf = built.solid ? makeBuf(built.solid, false) : null;
-
-// haze: a random subset drawn as wide, faint sprites -- the unresolved light
-let hazeBuf = null;
-if (S.haze > 0) {
-  const frac = S.hazeFrac || 0.05, keep = [];
-  for (let i = 0; i < count; i++) if (rnd() < frac) keep.push(i);
-  const h = new Float32Array(keep.length * STRIDE);
-  keep.forEach((i, j) => { h.set(data.subarray(i * STRIDE, i * STRIDE + STRIDE), j * STRIDE); h[j * STRIDE + 6] = S.hazeFlux || data[i * STRIDE + 6]; });
-  hazeBuf = makeBuf(h, false);
-  hazeBuf.keep = keep; hazeBuf.arr = h;
-}
-
-// distant stars in the camera's frame
-let bgBuf = null;
-if (S.bg) {
-  const n = ctx.lite ? Math.round(S.bg * 0.7) : S.bg, a = new Float32Array(n * STRIDE);
-  for (let i = 0; i < n; i++) {
-    const ax = (rnd() * 2 - 1) * 42 * DEG, ay = (rnd() * 2 - 1) * 38 * DEG;
-    let x = Math.tan(ax), y = Math.tan(ay), z = -1; const l = Math.hypot(x, y, z);
-    const w = rnd(), c = w < 0.2 ? [0.72, 0.8, 1.0] : w > 0.85 ? [1.0, 0.86, 0.68] : [0.92, 0.93, 1.0];
-    a.set([x / l * 1000, y / l * 1000, z / l * 1000, c[0], c[1], c[2], 0.35 + 4.5 * Math.pow(rnd(), 7), 0, 0, 0, 0], i * STRIDE);   // mostly faint, a scattering of brighter ones
-  }
-  bgBuf = makeBuf(a, false);
 }
 
 // ---------------------------------------------------------------- matrices (column-major)
@@ -196,9 +163,61 @@ function persp(fovy, asp, n, f) {
   return new Float32Array([t / asp,0,0,0, 0,t,0,0, 0,0,(f + n) / (n - f),-1, 0,0,2 * f * n / (n - f),0]);
 }
 
+// ---------------------------------------------------------------- the scene
+// Everything below is built from the scene, and replaced with it.
+let S, built, data, count, prog, progDust, progSolid, u, us, ud, tickLoc;
+let main, dustBuf, frontBuf, solidBuf, hazeBuf, bgBuf, V, FOV, OFFSET, BASE, PPK_REF;
+let t0, simT, lastNow, stepped, leaving;
+function free() {
+  for (const p of [prog, progDust, progSolid]) if (p) gl.deleteProgram(p);
+  for (const b of [main, dustBuf, frontBuf, solidBuf, hazeBuf, bgBuf]) if (b) gl.deleteBuffer(b.buf);
+}
+function load(scene) {
+  free();
+  S = scene;
+  seed = 0x9e3779b9;                                     // the same scene draws the same every time
+  built = S.build(ctx);
+  data = built.data; count = data.length / STRIDE;
+  prog = program(HEAD + S.glsl + MAIN, FS);
+  progDust = built.dust ? program(HEAD + S.glsl + DUST_MAIN, FS_DUST) : null;
+  progSolid = built.solid ? program(HEAD + S.glsl + SOLID_MAIN, FS_SOLID) : null;
+  u = U(prog); tickLoc = {};
+  us = progSolid ? Object.assign(U(progSolid), { uSolidPx: gl.getUniformLocation(progSolid, "uSolidPx") }) : null;
+  ud = progDust ? Object.assign(U(progDust), { uDustPx: gl.getUniformLocation(progDust, "uDustPx") }) : null;
+  main = makeBuf(data, !!S.step);
+  dustBuf = built.dust ? makeBuf(built.dust, false) : null;
+  frontBuf = built.front ? makeBuf(built.front, false) : null;
+  solidBuf = built.solid ? makeBuf(built.solid, false) : null;
+  hazeBuf = null; bgBuf = null;
+  // haze: a random subset drawn as wide, faint sprites -- the unresolved light
+  if (S.haze > 0) {
+    const frac = S.hazeFrac || 0.05, keep = [];
+    for (let i = 0; i < count; i++) if (rnd() < frac) keep.push(i);
+    const h = new Float32Array(keep.length * STRIDE);
+    keep.forEach((i, j) => { h.set(data.subarray(i * STRIDE, i * STRIDE + STRIDE), j * STRIDE); h[j * STRIDE + 6] = S.hazeFlux || data[i * STRIDE + 6]; });
+    hazeBuf = makeBuf(h, false);
+    hazeBuf.keep = keep; hazeBuf.arr = h;
+  }
+
+  // distant stars in the camera's frame
+  if (S.bg) {
+    const n = ctx.lite ? Math.round(S.bg * 0.7) : S.bg, a = new Float32Array(n * STRIDE);
+    for (let i = 0; i < n; i++) {
+      const ax = (rnd() * 2 - 1) * 42 * DEG, ay = (rnd() * 2 - 1) * 38 * DEG;
+      let x = Math.tan(ax), y = Math.tan(ay), z = -1; const l = Math.hypot(x, y, z);
+      const w = rnd(), c = w < 0.2 ? [0.72, 0.8, 1.0] : w > 0.85 ? [1.0, 0.86, 0.68] : [0.92, 0.93, 1.0];
+      a.set([x / l * 1000, y / l * 1000, z / l * 1000, c[0], c[1], c[2], 0.35 + 4.5 * Math.pow(rnd(), 7), 0, 0, 0, 0], i * STRIDE);   // mostly faint, a scattering of brighter ones
+    }
+    bgBuf = makeBuf(a, false);
+  }
+  V = S.view; FOV = (V.fov || 26) * DEG; OFFSET = V.offset || [0, 0];
+  BASE = mul(rotX(-(Math.PI / 2 - V.el * DEG)), rotZ(-V.az * DEG - Math.PI / 2));
+  PPK_REF = S.ppkRef || 500 / (V.radius * 1.05);       // px per unit on a 1600x1000 window, where exposure is tuned
+  t0 = performance.now(); simT = 0; lastNow = null; stepped = false; leaving = null;
+  resize();
+}
+
 // ---------------------------------------------------------------- view
-const V = S.view, FOV = (V.fov || 26) * DEG, OFFSET = V.offset || [0, 0];
-const BASE = mul(rotX(-(Math.PI / 2 - V.el * DEG)), rotZ(-V.az * DEG - Math.PI / 2));
 let W = 0, H = 0, dpr = 1, dist = 10, roll = 0, ppk = 1, P, dirty = true, restYaw = 0;
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 1.5);   // fill is the cost, and it goes as dpr squared; sprites scale with it, so the look holds
@@ -219,7 +238,6 @@ function resize() {
   ppk = (H / 2) / (tv * dist);
   dirty = true;
 }
-const PPK_REF = S.ppkRef || 500 / (V.radius * 1.05);   // px per unit on a 1600x1000 window, where exposure is tuned
 
 // ---------------------------------------------------------------- input: pointer parallax + device motion
 const MAX_YAW = 9 * DEG, MAX_PITCH = 7 * DEG;
@@ -241,13 +259,10 @@ function onOrient(e) {
   tx = Math.max(-1, Math.min(1, (x - base.x) / 14)); ty = Math.max(-1, Math.min(1, (y - base.y) / 14));
   usingMotion = true;
 }
-if (typeof DeviceOrientationEvent !== "undefined") {
-  if (typeof DeviceOrientationEvent.requestPermission === "function" && coarse) {
-    window.addEventListener("click", () => {
-      DeviceOrientationEvent.requestPermission().then((s) => { if (s === "granted") window.addEventListener("deviceorientation", onOrient); }).catch(() => {});
-    }, { once: true });
-  } else window.addEventListener("deviceorientation", onOrient);
-}
+// iOS sends orientation only after a permission prompt, and a page that asks for motion
+// on its first tap is not worth a parallax effect; there, touch drives it instead.
+if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission !== "function")
+  window.addEventListener("deviceorientation", onOrient);
 
 // ---------------------------------------------------------------- wheel: a little zoom, eased
 // The wheel (and a trackpad pinch, which arrives as a wheel event with ctrlKey) moves the
@@ -263,18 +278,19 @@ window.addEventListener("wheel", (e) => {
 // ---------------------------------------------------------------- loop
 gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.clearColor(0, 0, 0, 1);
 const pinned = /^#t=/.test(location.hash) ? parseFloat(location.hash.slice(3)) : null;   // preview aid: freeze the clock
-const t0 = performance.now();
-let simT = 0, lastNow = null;
+const ENTER_S = 1.8, LEAVE_S = 0.6;                       // seconds a scene takes to fade in, and out
 // Everything here moves slowly, so 30 frames a second is enough; uncapped, a 120 Hz display
 // would draw four times the frames for nothing. The slack keeps a 60 Hz display at 30, not 20.
 const FRAME_MS = 1000 / 30 - 4;
 
 function frame(now) {
   requestAnimationFrame(frame);
+  if (!S) return;
   if (lastNow !== null && now - lastNow < FRAME_MS) return;
   const real = pinned !== null ? pinned : (now - t0) / 1000;
   const dtReal = lastNow === null ? 0 : Math.min(0.05, (now - lastNow) / 1000); lastNow = now;
-  const intro = Math.min(1, real / 3.2), ease = 1 - Math.pow(1 - intro, 3), fade = Math.min(1, real / 1.8);
+  const intro = Math.min(1, real / 3.2), ease = 1 - Math.pow(1 - intro, 3);
+  const fade = Math.min(1, real / ENTER_S) * (leaving === null ? 1 : Math.max(0, 1 - (now - leaving) / 1000 / LEAVE_S));
   const speed = reduceMotion ? 0 : 1;
   if (pinned !== null) simT = pinned * (S.timeScale || 1);
   else simT += dtReal * (S.timeScale || 1) * speed;
@@ -286,7 +302,7 @@ function frame(now) {
   const ppkZ = ppk / zoom;                      // px per unit at the centre, zoom included
 
   if (S.step) {
-    if (pinned !== null && !frame.done) { for (let i = 0; i < pinned * 60; i++) S.step(1 / 60 * (S.timeScale || 1), data, simT); frame.done = true; }
+    if (pinned !== null && !stepped) { for (let i = 0; i < pinned * 60; i++) S.step(1 / 60 * (S.timeScale || 1), data, simT); stepped = true; }
     else if (pinned === null && speed) S.step(dtReal * (S.timeScale || 1), data, simT);
     gl.bindBuffer(gl.ARRAY_BUFFER, main.buf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
     if (hazeBuf) {
@@ -357,7 +373,12 @@ function frame(now) {
   if (solidBuf) { gl.disable(gl.DEPTH_TEST); gl.depthMask(true); }
 
 }
-window.addEventListener("resize", resize);
-resize();
-requestAnimationFrame(frame);
+window.addEventListener("resize", () => { if (S) resize(); });
+let running = false;
+window.ENGINE = {
+  // a scene that fails to build leaves the canvas black and the error to the page
+  run(scene) { try { load(scene); } catch (e) { S = null; throw e; } if (!running) { running = true; requestAnimationFrame(frame); } },
+  leave() { if (S && leaving === null) leaving = performance.now(); },
+  ENTER_MS: ENTER_S * 1000, LEAVE_MS: LEAVE_S * 1000,
+};
 })();

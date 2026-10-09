@@ -32,6 +32,29 @@
   /* an icon is as tall as a capital letter beside it, and sits on the same baseline */
   .links svg { width: 1cap; height: 1cap; fill: currentColor; vertical-align: baseline; }
   .links .text { letter-spacing: 0.12em; }
+  /* previous and next: two outline triangles, nothing around them */
+  .step { position: fixed; right: max(12px, env(safe-area-inset-right)); top: max(14px, env(safe-area-inset-top)); display: flex; gap: 2px; }
+  .step button { width: 44px; height: 44px; padding: 0; border: 0; background: none; cursor: pointer;
+    color: rgba(236, 240, 255, 0.34); transition: color 0.3s ease; }
+  .step button:hover, .step button:focus-visible { color: rgba(236, 240, 255, 0.85); outline: none; }
+  .step svg { display: block; width: 20px; height: 20px; margin: auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+  @media (min-width: 721px) { .step { right: 28px; top: 32px; } }
+  /* a magnetic disk, schematically: the platter spins under a read arm while a scene loads */
+  .loading { position: fixed; left: max(20px, env(safe-area-inset-left)); bottom: max(18px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    color: rgba(236, 240, 255, 0.5); pointer-events: none; opacity: 0; transition: opacity 0.4s ease; }
+  .loading.on { opacity: 1; }
+  .loading svg { display: block; width: 44px; height: 44px; fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; }
+  .loading .platter { fill: rgba(236, 240, 255, 0.06); }
+  .loading .tracks { transform-box: view-box; transform-origin: 20px 20px; animation: spin 0.9s linear infinite paused; }
+  .loading .arm { transform-box: view-box; transform-origin: 36px 35px; animation: seek 2.6s ease-in-out infinite alternate paused; }
+  .loading.on .tracks, .loading.on .arm { animation-play-state: running; }
+  .loading .dot { fill: currentColor; stroke: none; }
+  .loading span { font-size: 9px; letter-spacing: 0.3em; margin-right: -0.3em; text-transform: uppercase; color: var(--faint); }
+  @keyframes seek { from { transform: rotate(-9deg); } to { transform: rotate(13deg); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .corner { transition: opacity 0.6s ease; }
+  .corner.out { opacity: 0; }
   .fade { animation: fade 2.4s ease both; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 </style>
@@ -48,32 +71,109 @@
     <a class="text" href="https://{{ site_blog_domain }}/">Blog</a>
   </nav>
 </div>
+<nav class="step fade" aria-label="Scenes">
+  <button type="button" id="prev" aria-label="Previous scene" title="Previous scene"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 3.5v13L4.5 10z"/></svg></button>
+  <button type="button" id="next" aria-label="Next scene" title="Next scene"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5v13L15.5 10z"/></svg></button>
+</nav>
 <div class="corner fade" id="corner"><div class="name"></div><div class="caption"></div><div class="notice"></div></div>
+<div class="loading" id="loading" role="status" aria-label="Loading"><svg viewBox="0 0 40 40" aria-hidden="true">
+  <circle class="platter" cx="20" cy="20" r="17.5"/>
+  <g class="tracks">
+    <circle cx="20" cy="20" r="14.5" stroke-dasharray="9 2.5 3 2.5" stroke-opacity="0.75"/>
+    <circle cx="20" cy="20" r="11.5" stroke-dasharray="5 2 1.5 2" stroke-opacity="0.6"/>
+    <circle cx="20" cy="20" r="8.5" stroke-dasharray="2.5 1.8" stroke-opacity="0.5"/>
+    <path d="M20 5.5v3" stroke-width="1.6"/>
+  </g>
+  <circle cx="20" cy="20" r="3.2"/><circle class="dot" cx="20" cy="20" r="1"/>
+  <g class="arm"><path d="M36 35 23.5 22.5" stroke-width="1.4"/><circle class="dot" cx="23.5" cy="22.5" r="1.3"/><circle cx="36" cy="35" r="2.2"/></g>
+</svg><span>loading</span></div>
 <script>
 (() => {
-  // one scene at random, never the one shown last time -- or the one named in the URL
-  const SCENES = ["milky-way", "solar-system", "deep-space-nine", "earth"];
+{#
+  Every script is asked for by a URL carrying a digest of its content. Cloudflare holds
+  .js at the edge for hours but never the page, so under a plain name a converge would
+  pair the new page with the old engine, and nothing would start; a changed file is a
+  new URL, which no cache has seen.
+#}
+{% set site_scenes = ['milky-way', 'solar-system', 'deep-space-nine', 'earth'] %}
+{% set site_versions = {} %}
+{% for f in ['engine'] + site_scenes | map('regex_replace', '^', 'scenes/') | list %}
+{% set _ = site_versions.update({f: (lookup('ansible.builtin.file', f ~ '.js') | hash('sha1'))[:10]}) %}
+{% endfor %}
+  const SCENES = {{ site_scenes | to_json }};
+  const VERSION = {{ site_versions | to_json }};
+  const url = (f) => f + ".js?v=" + VERSION[f];
+  // The scenes run in a fixed order, as a loop. Each visit opens on the one after the
+  // scene shown last, and the buttons step either way. #milky-way etc. in the URL opens
+  // on that one instead.
+  const step = (name, d) => SCENES[(SCENES.indexOf(name) + d + SCENES.length) % SCENES.length];
   let last = null;
   try { last = localStorage.getItem("scene"); } catch (e) {}
-  const pool = SCENES.length > 1 ? SCENES.filter((s) => s !== last) : SCENES;
-  const asked = location.hash.slice(1);                 // #milky-way etc. shows that one
-  const pick = SCENES.includes(asked) ? asked : pool[Math.floor(Math.random() * pool.length)];
-  try { localStorage.setItem("scene", pick); } catch (e) {}
-  const load = (src) => new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.body.appendChild(s); });
-  const show = (name) => load("scenes/" + name + ".js").then(() => {
-    const m = window.META || {};
-    // a scene with live data fetches it first; if it cannot, show another scene instead
-    return !m.fetch ? m : fetch(m.fetch, { cache: "no-cache" }).then((r) => { if (!r.ok) throw r.status; return r.json(); })
-      .then((d) => { Object.assign(window.DATA, d); return m; });
+
+  const load = (src) => new Promise((ok, fail) => {
+    const s = document.createElement("script"); s.src = src;
+    s.onload = () => { s.remove(); ok(); }; s.onerror = () => { s.remove(); fail(); };
+    document.body.appendChild(s);
   });
-  show(pick).catch(() => show(SCENES.filter((s) => s !== pick && s !== "earth")[0])).then((m) => {
-    const corner = document.getElementById("corner"), site = document.querySelector("h1").textContent;
-    document.title = m.name ? site + " · " + m.name : site;
-    corner.querySelector(".name").textContent = m.name || "";
-    corner.querySelector(".caption").innerHTML = m.caption || "";
-    corner.querySelector(".notice").textContent = m.notice || "";
-    for (const el of corner.querySelectorAll(".caption, .notice")) if (!el.innerHTML) el.remove();
-    return load("engine.js");
+  // a scene file sets DATA, META and SCENE; one with live data fetches it before it counts as loaded
+  const get = (name) => load(url("scenes/" + name)).then(() => {
+    const m = window.META || {}, scene = window.SCENE, got = { name, m, scene };
+    return !m.fetch ? got : fetch(m.fetch, { cache: "no-cache" }).then((r) => { if (!r.ok) throw r.status; return r.json(); })
+      .then((d) => { Object.assign(window.DATA, d); return got; });
+  });
+  const engine = load(url("engine"));
+  const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const painted = () => new Promise((ok) => requestAnimationFrame(() => setTimeout(ok, 0)));
+
+  const corner = document.getElementById("corner"), loading = document.getElementById("loading");
+  const site = document.querySelector("h1").textContent;
+  let current = null, busy = false, tapeOff = null;
+  const fetchFrom = (name, d, left = SCENES.length - 1) => get(name)
+    .catch((e) => left > 0 && step(name, d) !== current ? fetchFrom(step(name, d), d, left - 1) : Promise.reject(e));
+  const go = (name, d) => {
+    busy = true;
+    // the tape runs from the moment the old scene starts to fade until the new one has faded in
+    clearTimeout(tapeOff); loading.classList.add("on");
+    let out = Promise.resolve();
+    if (current) {
+      window.ENGINE.leave();
+      corner.classList.remove("fade"); corner.classList.add("out");
+      out = wait(window.ENGINE.LEAVE_MS);
+    }
+    // a scene that cannot load is passed over, onward in the same direction
+    const scene = fetchFrom(name, d);
+    const start = (s) => {
+      window.ENGINE.run(s.scene);               // builds the scene, which holds the page a moment
+      current = s.name;
+      try { localStorage.setItem("scene", current); } catch (e) {}
+      document.title = s.m.name ? site + " · " + s.m.name : site;
+      corner.querySelector(".name").textContent = s.m.name || "";
+      corner.querySelector(".caption").innerHTML = s.m.caption || "";
+      corner.querySelector(".notice").textContent = s.m.notice || "";
+      for (const el of corner.querySelectorAll(".caption, .notice")) el.hidden = !el.innerHTML;
+      corner.classList.remove("out");
+    };
+    // and the same if it loads but cannot be built
+    return Promise.all([scene, engine, out]).then(([s]) => painted().then(() => {
+      try { start(s); } catch (e) { return fetchFrom(step(s.name, d), d).then(start); }
+    })).then(() => { tapeOff = setTimeout(() => loading.classList.remove("on"), window.ENGINE.ENTER_MS); },
+      () => loading.classList.remove("on"))
+      .finally(() => { busy = false; });
+  };
+
+  const asked = location.hash.slice(1);
+  go(SCENES.includes(asked) ? asked : SCENES.includes(last) ? step(last, 1) : SCENES[0], 1);
+  const move = (d) => {
+    if (busy || !current) return;
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    go(step(current, d), d);
+  };
+  document.getElementById("prev").addEventListener("click", () => move(-1));
+  document.getElementById("next").addEventListener("click", () => move(1));
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === "ArrowLeft") move(-1);
+    else if (e.key === "ArrowRight") move(1);
   });
 })();
 </script>
